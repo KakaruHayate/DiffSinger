@@ -217,22 +217,23 @@ class DiffSingerVariance(CategorizedModule, ParameterAdaptorModule):
                 gru_units = tpse_hparams['tpse_gru_hidden_size']
             )
             self.train_me_tpse = tpse_hparams['train_me_tpse']
-            if self.use_melody_encoder and self.train_me_tpse:
-                self.me_gst = StyleEncoder(
-                    idim = hparams['audio_num_mel_bins'], 
-                    gst_tokens = tpse_hparams['gst_tokens'], 
-                    gst_token_dim = hparams['hidden_size'], 
-                    gst_heads = tpse_hparams['gst_heads'], 
-                    gru_layers = tpse_hparams['gst_gru_layers'],
-                    gru_units = tpse_hparams['gst_gru_hidden_size']
-                )
-                self.me_tpse = TPSE(
-                    output_size = hparams['hidden_size'], 
-                    n_layers = tpse_hparams['tpse_fc_layers'], 
-                    gru_layers = tpse_hparams['tpse_gru_layers'],
-                    gru_in_units = hparams['hidden_size'], 
-                    gru_units = tpse_hparams['tpse_gru_hidden_size']
-                )
+            if self.train_me_tpse and self.predict_pitch:
+                if self.use_melody_encoder:
+                    self.me_gst = StyleEncoder(
+                        idim = hparams['audio_num_mel_bins'], 
+                        gst_tokens = tpse_hparams['gst_tokens'], 
+                        gst_token_dim = hparams['hidden_size'], 
+                        gst_heads = tpse_hparams['gst_heads'], 
+                        gru_layers = tpse_hparams['gst_gru_layers'],
+                        gru_units = tpse_hparams['gst_gru_hidden_size']
+                    )
+                    self.me_tpse = TPSE(
+                        output_size = hparams['hidden_size'], 
+                        n_layers = tpse_hparams['tpse_fc_layers'], 
+                        gru_layers = tpse_hparams['tpse_gru_layers'],
+                        gru_in_units = hparams['hidden_size'], 
+                        gru_units = tpse_hparams['tpse_gru_hidden_size']
+                    )
 
     def forward(
             self, txt_tokens, midi, ph2word, ph_dur=None, word_dur=None, mel2ph=None,
