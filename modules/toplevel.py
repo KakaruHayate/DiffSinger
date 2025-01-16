@@ -290,6 +290,8 @@ class DiffSingerVariance(CategorizedModule, ParameterAdaptorModule):
         if self.use_spk_id:
             condition += spk_embed
 
+        me_gst_pred = None
+        me_tpse_pred = None
         if self.predict_pitch:
             if self.use_melody_encoder:
                 melody_encoder_out = self.melody_encoder(
@@ -309,9 +311,7 @@ class DiffSingerVariance(CategorizedModule, ParameterAdaptorModule):
                         melody_condition = melody_condition + me_gst_pred
                     else:
                         melody_condition = melody_condition + me_tpse_pred
-                else:
-                    me_gst_pred = None
-                    me_tpse_pred = None
+
                 pitch_cond = condition + melody_condition
             else:
                 pitch_cond = condition.clone()  # preserve the original tensor to avoid further inplace operations
