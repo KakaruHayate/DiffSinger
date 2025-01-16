@@ -260,7 +260,7 @@ class VarianceTask(BaseTask):
             if gst_pred is not None:
                 tpse_loss = self.tpse_loss(tpse_pred, gst_pred)
                 losses['tpse_loss'] = tpse_loss
-                if self.train_me_tpse:
+                if self.train_me_tpse and me_gst_pred and me_gst_pred:
                     me_tpse_loss = self.tpse_loss(me_tpse_pred, me_gst_pred)
                     losses['me_tpse_loss'] = me_tpse_loss
 

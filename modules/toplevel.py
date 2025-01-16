@@ -289,6 +289,8 @@ class DiffSingerVariance(CategorizedModule, ParameterAdaptorModule):
         if self.use_spk_id:
             condition += spk_embed
 
+        me_tpse_pred = None
+        me_gst_pred = None
         if self.predict_pitch:
             if self.use_melody_encoder:
                 melody_encoder_out = self.melody_encoder(
