@@ -8,6 +8,7 @@ tpse_args: # 应该这样就行
   tpse_fc_layers: 1
   tpse_gru_layers: 1
   tpse_gru_hidden_size: 128
+  train_me_tpse: true
 
 # 为了variance添加的mel相关
 mel_base: 'e'
