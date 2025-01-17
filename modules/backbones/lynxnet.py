@@ -45,7 +45,7 @@ class LYNXConvModule(nn.Module):
         pad = kernel_size // 2
         return pad, pad - (kernel_size + 1) % 2
 
-    def __init__(self, dim, expansion_factor, kernel_size=31, activation='PReLU', dropout=0.):
+    def __init__(self, dim, expansion_factor, kernel_size=31, activation='PReLU', dropout=0.0):
         super().__init__()
         inner_dim = dim * expansion_factor
         activation_classes = {
@@ -79,27 +79,27 @@ class LYNXConvModule(nn.Module):
 
 
 class LYNXNetResidualLayer(nn.Module):
-    def __init__(self, dim_cond, dim, expansion_factor, kernel_size=31, activation='PReLU', dropout=0.):
+    def __init__(self, dim_cond, dim, expansion_factor, kernel_size=31, activation='PReLU', dropout=0.0):
         super().__init__()
         self.diffusion_projection = nn.Conv1d(dim, dim, 1)
         self.conditioner_projection = nn.Conv1d(dim_cond, dim, 1)
         self.convmodule = LYNXConvModule(dim=dim, expansion_factor=expansion_factor, kernel_size=kernel_size,
                                          activation=activation, dropout=dropout)
 
-    def forward(self, x, conditioner, diffusion_step):
-        x = x + self.conditioner_projection(conditioner)
-        res_x = x
-        x = x + self.diffusion_projection(diffusion_step)
-        x = x.transpose(1, 2)
-        x = self.convmodule(x)  # (#batch, dim, length) 
-        x = x.transpose(1, 2) + res_x
+    def forward(self, x, conditioner, diffusion_step, front_cond_inject=False):
+        if front_cond_inject:
+            x = x + self.conditioner_projection(conditioner)
+            res_x = x
+        else:
+            res_x = x
+            x = x + self.conditioner_projection(conditioner)
 
         return x  # (#batch, length, dim)
 
 
 class LYNXNet(nn.Module):
     def __init__(self, in_dims, n_feats, *, num_layers=6, num_channels=512, expansion_factor=2, kernel_size=31,
-                 activation='PReLU', dropout=0.):
+                 activation='PReLU', dropout=0.0, strong_cond=False):
         """
         LYNXNet(Linear Gated Depthwise Separable Convolution Network)
         TIPS:You can control the style of the generated results by modifying the 'activation', 
@@ -132,6 +132,7 @@ class LYNXNet(nn.Module):
         )
         self.norm = nn.LayerNorm(num_channels)
         self.output_projection = Conv1d(num_channels, in_dims * n_feats, kernel_size=1)
+        self.strong_cond = strong_cond
         nn.init.zeros_(self.output_projection.weight)
 
     def forward(self, spec, diffusion_step, cond):
@@ -148,12 +149,14 @@ class LYNXNet(nn.Module):
             x = spec.flatten(start_dim=1, end_dim=2)  # [B, F x M, T]
 
         x = self.input_projection(x)  # x [B, residual_channel, T]
-        # x = F.gelu(x) # 去掉这个ACT效果更好些
+
+        if not self.strong_cond:
+            x = F.gelu(x)
 
         diffusion_step = self.diffusion_embedding(diffusion_step).unsqueeze(-1)
 
         for layer in self.residual_layers:
-            x = layer(x, cond, diffusion_step)
+            x = layer(x, cond, diffusion_step, front_cond_inject=self.strong_cond)
 
         # post-norm
         x = self.norm(x.transpose(1, 2)).transpose(1, 2)
