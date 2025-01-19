@@ -93,7 +93,10 @@ class LYNXNetResidualLayer(nn.Module):
         else:
             res_x = x
             x = x + self.conditioner_projection(conditioner)
-
+        x = x + self.diffusion_projection(diffusion_step)
+        x = x.transpose(1, 2)
+        x = self.convmodule(x)  # (#batch, dim, length) 
+        x = x.transpose(1, 2) + res_x
         return x  # (#batch, length, dim)
 
 

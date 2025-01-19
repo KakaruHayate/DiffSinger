@@ -83,7 +83,7 @@ class FastSpeech2Acoustic(nn.Module):
                 gru_units = tpse_hparams['tpse_gru_hidden_size']
             )
 
-    def forward_variance_embedding(self, condition, key_shift=None, speed=None, infer=False, **variances):
+    def forward_variance_embedding(self, condition, key_shift=None, speed=None, **variances):
         if self.use_variance_embeds:
             variance_embeds = torch.stack([
                 self.variance_embeds[v_name](variances[v_name][:, :, None])
@@ -148,7 +148,7 @@ class FastSpeech2Acoustic(nn.Module):
         condition += pitch_embed
 
         condition = self.forward_variance_embedding(
-            condition, key_shift=key_shift, speed=speed, infer=infer, **kwargs
+            condition, key_shift=key_shift, speed=speed, **kwargs
         )
 
 
