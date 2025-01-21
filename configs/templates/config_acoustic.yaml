@@ -1,6 +1,17 @@
 base_config:
   - configs/acoustic.yaml
-  - configs/tpse.yaml
+
+use_esm: false # 在lang emb上加CA，懒得删除了
+train_tpse: true
+tpse_args: # 应该这样就行
+  gst_tokens: 10 # 可以加一些
+  gst_heads: 4 # 可以配合tokens数增加而增加，注意要能被hiddensize（256）整除
+  gst_gru_layers: 1
+  gst_gru_hidden_size: 128
+  tpse_fc_layers: 1
+  tpse_gru_layers: 1
+  tpse_gru_hidden_size: 128
+  train_me_tpse: true
 
 dictionaries:
   zh: dictionaries/opencpop-extension.txt

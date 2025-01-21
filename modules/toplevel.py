@@ -274,6 +274,8 @@ class DiffSingerVariance(CategorizedModule, ParameterAdaptorModule):
         condition = torch.gather(encoder_out, 1, mel2ph_)
         
         if self.train_tpse:
+            if mel==None and infer==False:
+                raise ValueError(f"Training GST requires mel input!")
             if mel is not None:
                 gst_pred = self.gst(mel)
             else:
@@ -290,8 +292,6 @@ class DiffSingerVariance(CategorizedModule, ParameterAdaptorModule):
         if self.use_spk_id:
             condition += spk_embed
 
-        me_gst_pred = None
-        me_tpse_pred = None
         if self.predict_pitch:
             if self.use_melody_encoder:
                 melody_encoder_out = self.melody_encoder(
@@ -305,12 +305,15 @@ class DiffSingerVariance(CategorizedModule, ParameterAdaptorModule):
                     if mel is not None:
                         me_gst_pred = self.me_gst(mel)
                     else:
-                        me_gst_pred = None
+                        raise ValueError(f"Training GST requires mel input!")
                     me_tpse_pred = self.me_tpse(melody_condition.detach()) # grad stopping
                     if not infer:
                         melody_condition = melody_condition + me_gst_pred
                     else:
                         melody_condition = melody_condition + me_tpse_pred
+                else:
+                    me_gst_pred = None
+                    me_tpse_pred = None
 
                 pitch_cond = condition + melody_condition
             else:

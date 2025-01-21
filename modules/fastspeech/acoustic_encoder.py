@@ -126,11 +126,17 @@ class FastSpeech2Acoustic(nn.Module):
 
         if self.train_tpse and mel is not None:
             tpse_pred = self.tpse(condition.detach()) # grad stopping
+            if mel==None and infer==False:
+                ## Note：acoustic的训练可能没有mel吗？？？？
+                raise ValueError(f"Training GST requires mel input!")
             gst_pred = self.gst(mel)
             if not infer:
-                condition += gst_pred
+                ## Note : 绝大多数的测试中这里都能正常backward，难道是torch版本问题？？？我完全搞不懂
+                # condition += gst_pred
+                condition = condition + gst_pred
             else:
-                condition += tpse_pred
+                # condition += tpse_pred
+                condition = condition + tpse_pred
         else:
             gst_pred = None
             tpse_pred = None
