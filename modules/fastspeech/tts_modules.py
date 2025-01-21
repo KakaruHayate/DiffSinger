@@ -3,7 +3,7 @@ import math
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-
+from rotary_embedding_torch import RotaryEmbedding
 from modules.commons.common_layers import SinusoidalPositionalEmbedding, EncSALayer
 from modules.commons.espnet_positional_embedding import RelPositionalEncoding
 
@@ -12,13 +12,13 @@ DEFAULT_MAX_TARGET_POSITIONS = 2000
 
 
 class TransformerEncoderLayer(nn.Module):
-    def __init__(self, hidden_size, dropout, kernel_size=None, act='gelu', num_heads=2):
+    def __init__(self, hidden_size, dropout, kernel_size=None, act='gelu', num_heads=2, rotary_embed=None):
         super().__init__()
         self.op = EncSALayer(
             hidden_size, num_heads, dropout=dropout,
             attention_dropout=0.0, relu_dropout=dropout,
             kernel_size=kernel_size,
-            act=act
+            act=act, rotary_embed=rotary_embed
         )
 
     def forward(self, x, **kwargs):
@@ -353,18 +353,21 @@ def mel2ph_to_dur(mel2ph, T_txt, max_dur=None):
 class FastSpeech2Encoder(nn.Module):
     def __init__(self, hidden_size, num_layers,
                  ffn_kernel_size=9, ffn_act='gelu',
-                 dropout=None, num_heads=2, use_pos_embed=True, rel_pos=True):
+                 dropout=None, num_heads=2, use_pos_embed=True, rel_pos=True, use_rope=False):
         super().__init__()
         self.num_layers = num_layers
         embed_dim = self.hidden_size = hidden_size
         self.dropout = dropout
         self.use_pos_embed = use_pos_embed
-
+        if use_pos_embed and use_rope:
+            rotary_embed = RotaryEmbedding(dim = embed_dim // num_heads)
+        else:
+            rotary_embed = None
         self.layers = nn.ModuleList([
             TransformerEncoderLayer(
                 self.hidden_size, self.dropout,
                 kernel_size=ffn_kernel_size, act=ffn_act,
-                num_heads=num_heads
+                num_heads=num_heads, rotary_embed=rotary_embed
             )
             for _ in range(self.num_layers)
         ])
@@ -373,7 +376,9 @@ class FastSpeech2Encoder(nn.Module):
         self.embed_scale = math.sqrt(hidden_size)
         self.padding_idx = 0
         self.rel_pos = rel_pos
-        if self.rel_pos:
+        if use_rope:
+            self.embed_positions = None
+        elif self.rel_pos:
             self.embed_positions = RelPositionalEncoding(hidden_size, dropout_rate=0.0)
         else:
             self.embed_positions = SinusoidalPositionalEmbedding(
@@ -385,7 +390,7 @@ class FastSpeech2Encoder(nn.Module):
         x = self.embed_scale * main_embed
         if extra_embed is not None:
             x = x + extra_embed
-        if self.use_pos_embed:
+        if self.use_pos_embed and self.embed_positions is not None:
             if self.rel_pos:
                 x = self.embed_positions(x)
             else:
@@ -396,7 +401,7 @@ class FastSpeech2Encoder(nn.Module):
 
     def forward(self, main_embed, extra_embed, padding_mask, attn_mask=None, return_hiddens=False):
         x = self.forward_embedding(main_embed, extra_embed, padding_mask=padding_mask)  # [B, T, H]
-        nonpadding_mask_TB = 1 - padding_mask.transpose(0, 1).float()[:, :, None]  # [T, B, 1]
+        nonpadding_mask_BT = 1 - padding_mask.float()[:, :, None]  # [B, T, 1]
 
         # NOTICE:
         # The following codes are commented out because
@@ -411,16 +416,13 @@ class FastSpeech2Encoder(nn.Module):
         #     x = x + positions
         #     x = F.dropout(x, p=self.dropout, training=self.training)
 
-        # B x T x C -> T x B x C
-        x = x.transpose(0, 1) * nonpadding_mask_TB
+        x = x * nonpadding_mask_BT
         hiddens = []
         for layer in self.layers:
-            x = layer(x, encoder_padding_mask=padding_mask, attn_mask=attn_mask) * nonpadding_mask_TB
-            hiddens.append(x)
-        x = self.layer_norm(x) * nonpadding_mask_TB
+            x = layer(x, encoder_padding_mask=padding_mask, attn_mask=attn_mask) * nonpadding_mask_BT
+            if return_hiddens:
+                hiddens.append(x)
+        x = self.layer_norm(x) * nonpadding_mask_BT
         if return_hiddens:
-            x = torch.stack(hiddens, 0)  # [L, T, B, C]
-            x = x.transpose(1, 2)  # [L, B, T, C]
-        else:
-            x = x.transpose(0, 1)  # [B, T, C]
+            x = torch.stack(hiddens, 0)  # [L, B, T, C]
         return x

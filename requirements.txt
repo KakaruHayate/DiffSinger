@@ -15,6 +15,7 @@ praat-parselmouth==0.4.3
 pyworld==0.3.4
 PyYAML
 resampy
+rotary_embedding_torch
 scipy>=1.10.0
 tensorboard
 tensorboardX
