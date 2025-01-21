@@ -33,6 +33,8 @@ predict_breathiness: false
 predict_voicing: false
 predict_tension: false
 
+enc_ffn_kernel_size: 3
+use_rope: true
 rel_pos: true
 hidden_size: 256
 
