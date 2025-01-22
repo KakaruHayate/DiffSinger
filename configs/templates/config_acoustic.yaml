@@ -88,6 +88,13 @@ backbone_args:
 #  num_channels: 512
 #  num_layers: 20
 #  dilation_cycle_length: 4
+#backbone_type: 'FFT'
+#backbone_args:
+#  fft_hidden_size: 512
+#  fft_num_layers: 4
+#  fft_kernel_size: 9
+#  fft_num_heads: 4
+#  fft_use_rope: true
 shallow_diffusion_args:
   train_aux_decoder: true
   train_diffusion: true

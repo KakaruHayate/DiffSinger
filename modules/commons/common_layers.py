@@ -11,6 +11,12 @@ from torch.nn import LayerNorm, MultiheadAttention, ReLU, GELU, SiLU
 import utils
 
 
+class Conv1d(torch.nn.Conv1d):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        nn.init.kaiming_normal_(self.weight)
+
+
 class NormalInitEmbedding(torch.nn.Embedding):
     def __init__(
             self,
