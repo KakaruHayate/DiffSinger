@@ -1,3 +1,10 @@
+## WIP!!!!
+
+请注意该分支仍在施工，慢更，大概率还跑不起来
+也是用上Roformer了，先搬砖
+计划是搬F5 TTS的DiT
+也会搬运一些奇怪的东西
+
 # DiffSinger (OpenVPI maintained version)
 
 [![arXiv](https://img.shields.io/badge/arXiv-Paper-<COLOR>.svg)](https://arxiv.org/abs/2105.02446)
