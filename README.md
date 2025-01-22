@@ -1,9 +1,12 @@
 ## WIP!!!!
 
 请注意该分支仍在施工，慢更，大概率还跑不起来
+
 也是用上Roformer了，先搬砖
-计划是搬F5 TTS的DiT
-也会搬运一些奇怪的东西
+
+计划是搬F5 TTS的DiT (https://github.com/SWivid/F5-TTS/blob/main/src/f5_tts/model/backbones/dit.py)
+
+也会搬运一些奇怪的东西(例如原版的FFT）
 
 # DiffSinger (OpenVPI maintained version)
 
