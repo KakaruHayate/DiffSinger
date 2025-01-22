@@ -181,6 +181,7 @@ class FastSpeech2VarianceONNX(FastSpeech2Variance):
             extra_embed = ph_dur_embed
         else:
             extra_embed = ph_dur_embed
+            lang_embed = None
         x_masks = tokens == PAD_INDEX
         return self.encoder(txt_embed, lang_embed, extra_embed, x_masks), x_masks
 
