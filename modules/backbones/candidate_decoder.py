@@ -10,6 +10,10 @@ from modules.fastspeech.tts_modules import TransformerEncoderLayer
 from utils.hparams import hparams
 
 
+DEFAULT_MAX_SOURCE_POSITIONS = 2000
+DEFAULT_MAX_TARGET_POSITIONS = 2000
+
+
 class FFT(nn.Module):
     def __init__(self, in_dims, n_feats, *, num_layers=6, num_channels=512, kernel_size=9, ffn_act='gelu',
                  dropout=0., num_heads=2, use_pos_embed=True, rel_pos=True, use_rope=False):
