@@ -11,15 +11,15 @@ from utils.hparams import hparams
 
 
 class FFT(nn.Module):
-    def __init__(self, in_dims, n_feats, *, hidden_size, num_layers, kernel_size=9, ffn_act='gelu',
-                 dropout=None, num_heads=2, use_pos_embed=True, rel_pos=True, use_rope=False):
+    def __init__(self, in_dims, n_feats, *, num_layers=6, num_channels=512, kernel_size=9, ffn_act='gelu',
+                 dropout=0., num_heads=2, use_pos_embed=True, rel_pos=True, use_rope=False):
         super().__init__()
         self.in_dims = in_dims
         self.n_feats = n_feats
-        self.hidden_size = hidden_size
+        hidden_size = self.hidden_size = num_channels
         self.num_layers = num_layers
-        embed_dim = hidden_size
-        self.input_projection = Conv1d(in_dims * n_feats, dim, 1)
+        embed_dim = self.hidden_size
+        self.input_projection = Conv1d(in_dims * n_feats, hidden_size, 1)
         self.diffusion_embedding = SinusoidalPosEmb(hidden_size)
         self.mlp = nn.Sequential(
             nn.Linear(hidden_size, hidden_size * 4),
@@ -41,6 +41,9 @@ class FFT(nn.Module):
             )
             for _ in range(self.num_layers)
         ])
+        
+        self.checkpoint_activations = False # 石山爆炸，用不了
+        
         self.layer_norm = nn.LayerNorm(embed_dim)
 
         self.padding_idx = 0
@@ -54,8 +57,17 @@ class FFT(nn.Module):
                 hidden_size, self.padding_idx, init_size=DEFAULT_MAX_TARGET_POSITIONS,
             )
 
-            self.get_mel_out = nn.Linear(hidden_size, in_dims * n_feats, bias=True)
-            nn.init.zeros_(self.get_mel_out.weight)
+        self.get_mel_out = nn.Linear(hidden_size, in_dims * n_feats, bias=True)
+        nn.init.zeros_(self.get_mel_out.weight)
+
+    def ckpt_wrapper(self, module):
+        # https://github.com/chuanyangjin/fast-DiT/blob/main/models.py
+        def ckpt_forward(*inputs):
+            #ic(*inputs.shape)
+            outputs = module(*inputs)
+            return outputs
+
+        return ckpt_forward
 
     def forward_embedding(self, x, padding_mask=None):
         # embed tokens and positions
@@ -101,12 +113,16 @@ class FFT(nn.Module):
         '''
         padding_mask = x.abs().sum(-1).eq(0).data if padding_mask is None else padding_mask
         x = self.forward_embedding(x, padding_mask=padding_mask)  # [B, T, H]
-        nonpadding_mask_TB = 1 - padding_mask.transpose(0, 1).float()[:, :, None]  # [T, B, 1]
+        nonpadding_mask_TB = 1 - padding_mask.float()[:, :, None]  # [T, B, 1]
         # B x T x C -> T x B x C
-        x = x.transpose(0, 1) * nonpadding_mask_TB
+        x = x * nonpadding_mask_TB
         hiddens = []
         for layer in self.layers:
-            x = layer(x, encoder_padding_mask=padding_mask, attn_mask=attn_mask) * nonpadding_mask_TB
+            if self.checkpoint_activations:
+                x = torch.utils.checkpoint.checkpoint(self.ckpt_wrapper(layer), x, padding_mask, attn_mask)
+            else:
+                x = layer(x, encoder_padding_mask=padding_mask, attn_mask=attn_mask)
+            x = x * nonpadding_mask_TB
             if return_hiddens:
                 hiddens.append(x)
         x = self.layer_norm(x) * nonpadding_mask_TB
