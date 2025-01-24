@@ -187,15 +187,16 @@ class DiffSingerVarianceONNX(DiffSingerVariance):
                 gru_in_units = hparams['hidden_size'], 
                 gru_units = tpse_hparams['tpse_gru_hidden_size']
             )
-            if self.use_melody_encoder and self.train_me_tpse:
-                del self.me_gst
-                self.me_tpse = TPSE(
-                    output_size = hparams['hidden_size'], 
-                    n_layers = tpse_hparams['tpse_fc_layers'], 
-                    gru_layers = tpse_hparams['tpse_gru_layers'],
-                    gru_in_units = hparams['hidden_size'], 
-                    gru_units = tpse_hparams['tpse_gru_hidden_size']
-                )
+            if self.predict_pitch:
+                if self.use_melody_encoder and self.train_me_tpse:
+                    del self.me_gst
+                    self.me_tpse = TPSE(
+                        output_size = hparams['hidden_size'], 
+                        n_layers = tpse_hparams['tpse_fc_layers'], 
+                        gru_layers = tpse_hparams['tpse_gru_layers'],
+                        gru_in_units = hparams['hidden_size'], 
+                        gru_units = tpse_hparams['tpse_gru_hidden_size']
+                    )
 
 
     def build_smooth_op(self, device):
