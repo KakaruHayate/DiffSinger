@@ -371,8 +371,9 @@ class DiffSingerVarianceONNX(DiffSingerVariance):
             del model.variance_predictor
         if self.train_tpse:
             del model.tpse
-            if self.train_me_tpse:
-                del model.me_tpse
+            if self.predict_pitch:
+                if self.train_me_tpse:
+                    del model.me_tpse
         model.fs2 = model.fs2.view_as_dur_predictor()
         model.forward = model.forward_dur_predictor
         return model
