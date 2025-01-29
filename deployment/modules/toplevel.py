@@ -346,13 +346,12 @@ class DiffSingerVarianceONNX(DiffSingerVariance):
             del model.pitch_predictor
             if self.use_melody_encoder:
                 del model.melody_encoder
+                if self.train_tpse and self.train_me_tpse:
+                    del model.me_tpse
         if self.predict_variances:
             del model.variance_predictor
         if self.train_tpse:
             del model.tpse
-            if self.predict_pitch:
-                if self.train_me_tpse:
-                    del model.me_tpse
         model.fs2 = model.fs2.view_as_encoder()
         if self.predict_dur:
             model.forward = model.forward_linguistic_encoder_word
@@ -367,13 +366,12 @@ class DiffSingerVarianceONNX(DiffSingerVariance):
             del model.pitch_predictor
             if self.use_melody_encoder:
                 del model.melody_encoder
+                if self.train_tpse and self.train_me_tpse:
+                    del model.me_tpse
         if self.predict_variances:
             del model.variance_predictor
         if self.train_tpse:
             del model.tpse
-            if self.predict_pitch:
-                if self.train_me_tpse:
-                    del model.me_tpse
         model.fs2 = model.fs2.view_as_dur_predictor()
         model.forward = model.forward_dur_predictor
         return model
@@ -395,12 +393,12 @@ class DiffSingerVarianceONNX(DiffSingerVariance):
         del model.lr
         if self.use_melody_encoder:
             del model.melody_encoder
+            if self.train_tpse and self.train_me_tpse:
+                del model.me_tpse
         if self.predict_variances:
             del model.variance_predictor
         if self.train_tpse:
             del model.tpse
-            if self.train_me_tpse:
-                del model.me_tpse
         model.forward = model.forward_pitch_reflow
         return model
 
@@ -409,12 +407,12 @@ class DiffSingerVarianceONNX(DiffSingerVariance):
         del model.fs2
         if self.use_melody_encoder:
             del model.melody_encoder
+            if self.train_tpse and self.train_me_tpse:
+                del model.me_tpse
         if self.predict_variances:
             del model.variance_predictor
         if self.train_tpse:
             del model.tpse
-            if self.train_me_tpse:
-                del model.me_tpse
         model.forward = model.forward_pitch_postprocess
         return model
 
@@ -425,11 +423,10 @@ class DiffSingerVarianceONNX(DiffSingerVariance):
             del model.pitch_predictor
             if self.use_melody_encoder:
                 del model.melody_encoder
+                if self.train_tpse and self.train_me_tpse:
+                    del model.me_tpse
         if self.predict_variances:
             del model.variance_predictor
-        if self.train_tpse:
-            if self.train_me_tpse:
-                del model.me_tpse
         model.forward = model.forward_variance_preprocess
         return model
 
@@ -440,12 +437,12 @@ class DiffSingerVarianceONNX(DiffSingerVariance):
         del model.lr
         if self.train_tpse:
             del model.tpse
-            if self.train_me_tpse:
-                del model.me_tpse
         if self.predict_pitch:
             del model.pitch_predictor
             if self.use_melody_encoder:
                 del model.melody_encoder
+                if self.train_tpse and self.train_me_tpse:
+                    del model.me_tpse
         model.forward = model.forward_variance_reflow
         return model
 
@@ -456,9 +453,9 @@ class DiffSingerVarianceONNX(DiffSingerVariance):
             del model.pitch_predictor
             if self.use_melody_encoder:
                 del model.melody_encoder
+                if self.train_tpse and self.train_me_tpse:
+                    del model.me_tpse
         if self.train_tpse:
             del model.tpse
-            if self.train_me_tpse:
-                del model.me_tpse
         model.forward = model.forward_variance_postprocess
         return model
