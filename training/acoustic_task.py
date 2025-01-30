@@ -175,21 +175,23 @@ class AcousticTask(BaseTask):
                 if self.diffusion_type == 'ddpm':
                     x_recon, x_noise = output.diff_out
                     mel_loss = self.mel_loss(x_recon, x_noise, non_padding=non_padding)
+                    losses['mel_loss'] = mel_loss
                 elif self.diffusion_type == 'reflow':
                     if self.use_consistency_fm:
                         v_pred_a, v_pred_b, f_pred_a, f_pred_b, v_pred, v_gt = output.diff_out
                         f_loss = self.f_loss(f_pred_a, f_pred_b, non_padding=non_padding)
+                        losses['f_loss'] = f_loss * self.consistency_lambda_f
                         v_loss = self.v_loss(v_pred_a, v_pred_b, non_padding=non_padding)
-                        mel_loss = self.consistency_lambda_f * f_loss + self.consistency_lambda_v * v_loss
+                        losses['v_loss'] = v_loss * self.consistency_lambda_v
                         if not self.consistency_only:
-                            reflow_loss = self.mel_loss(v_pred, v_gt, t=None, non_padding=non_padding)
-                            mel_loss = mel_loss + reflow_loss
+                            mel_loss = self.mel_loss(v_pred, v_gt, t=None, non_padding=non_padding)
+                            losses['mel_loss'] = mel_loss
                     else:
                         v_pred, v_gt, t = output.diff_out
                         mel_loss = self.mel_loss(v_pred, v_gt, t=t, non_padding=non_padding)
+                        losses['mel_loss'] = mel_loss
                 else:
                     raise ValueError(f"Unknown diffusion type: {self.diffusion_type}")
-                losses['mel_loss'] = mel_loss
 
             return losses
 

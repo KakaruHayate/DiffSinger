@@ -243,46 +243,51 @@ class VarianceTask(BaseTask):
                     pitch_loss = self.pitch_loss(
                         pitch_x_recon, pitch_noise, non_padding=non_padding
                     )
+                    losses['pitch_loss'] = self.lambda_pitch_loss * pitch_loss
                 elif self.diffusion_type == 'reflow':
                     if self.use_consistency_fm:
                         pitch_v_pred_a, pitch_v_pred_b, pitch_f_pred_a, pitch_f_pred_b, pitch_v_pred, pitch_v_gt = pitch_pred
                         pitch_f_loss = self.pitch_f_loss(pitch_f_pred_a, pitch_f_pred_b, non_padding=non_padding)
+                        losses['pitch_f_loss'] = pitch_f_loss * self.consistency_lambda_f
                         pitch_v_loss = self.pitch_v_loss(pitch_v_pred_a, pitch_v_pred_b, non_padding=non_padding)
-                        pitch_loss = self.consistency_lambda_f * pitch_f_loss + self.consistency_lambda_v * pitch_v_loss
+                        losses['pitch_v_loss'] = pitch_v_loss * self.consistency_lambda_v
                         if not self.consistency_only:
-                            reflow_loss = self.pitch_loss(pitch_v_pred, pitch_v_gt, t=None, non_padding=non_padding)
+                            pitch_loss = self.pitch_loss(pitch_v_pred, pitch_v_gt, t=None, non_padding=non_padding)
                             pitch_loss = pitch_loss + reflow_loss
+                            losses['pitch_loss'] = self.lambda_pitch_loss * pitch_loss
                     else:
                         pitch_v_pred, pitch_v_gt, t = pitch_pred
                         pitch_loss = self.pitch_loss(
                             pitch_v_pred, pitch_v_gt, t=t, non_padding=non_padding
                         )
+                        losses['pitch_loss'] = self.lambda_pitch_loss * pitch_loss
                 else:
                     raise ValueError(f"Unknown diffusion type: {self.diffusion_type}")
-                losses['pitch_loss'] = self.lambda_pitch_loss * pitch_loss
             if variances_pred is not None:
                 if self.diffusion_type == 'ddpm':
                     var_x_recon, var_noise = variances_pred
                     var_loss = self.var_loss(
                         var_x_recon, var_noise, non_padding=non_padding
                     )
+                    losses['var_loss'] = self.lambda_var_loss * var_loss
                 elif self.diffusion_type == 'reflow':
                     if self.use_consistency_fm:
                         var_v_pred_a, var_v_pred_b, var_f_pred_a, var_f_pred_b, var_v_pred, var_v_gt = output.diff_out
                         var_f_loss = self.var_f_loss(var_f_pred_a, var_f_pred_b, non_padding=non_padding)
+                        losses['var_f_loss'] = var_f_loss * self.consistency_lambda_f
                         var_v_loss = self.var_v_loss(var_v_pred_a, var_v_pred_b, non_padding=non_padding)
-                        var_loss = self.consistency_lambda_f * var_f_loss + self.consistency_lambda_v * var_v_loss
+                        losses['var_v_loss'] = var_v_loss * self.consistency_lambda_v
                         if not self.consistency_only:
-                            reflow_loss = self.var_loss(var_v_pred, var_v_gt, t=None, non_padding=non_padding)
-                            var_loss = var_loss + reflow_loss
+                            var_loss = self.var_loss(var_v_pred, var_v_gt, t=None, non_padding=non_padding)
+                            losses['var_loss'] = self.lambda_var_loss * var_loss
                     else:
                         var_v_pred, var_v_gt, t = variances_pred
                         var_loss = self.var_loss(
                             var_v_pred, var_v_gt, t=t, non_padding=non_padding
                         )
+                        losses['var_loss'] = self.lambda_var_loss * var_loss
                 else:
                     raise ValueError(f"Unknown diffusion type: {self.diffusion_type}")
-                losses['var_loss'] = self.lambda_var_loss * var_loss
 
             return losses
 
