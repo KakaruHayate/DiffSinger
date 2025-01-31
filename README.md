@@ -1,3 +1,10 @@
+# Consistency Flow Matching
+
+参考：https://arxiv.org/pdf/2407.02398v1
+
+之前实验的一种加速方式，效果尚可但是打不过shortcut，详见shortcut分支
+
+
 # DiffSinger (OpenVPI maintained version)
 
 [![arXiv](https://img.shields.io/badge/arXiv-Paper-<COLOR>.svg)](https://arxiv.org/abs/2105.02446)
