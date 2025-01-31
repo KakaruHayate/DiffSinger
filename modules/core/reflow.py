@@ -89,7 +89,11 @@ class RectifiedFlow(nn.Module):
 
     @torch.no_grad()
     def sample_euler(self, x, t, dt, cond):
-        x += self.velocity_fn(x, self.time_scale_factor * t, cond) * dt
+        if self.train_shortcut_model:
+            d=self.time_scale_factor * dt
+        else:
+            d=None
+        x += self.velocity_fn(x, self.time_scale_factor * t, cond, d) * dt
         t += dt
         return x, t
 
@@ -141,6 +145,8 @@ class RectifiedFlow(nn.Module):
             x = noise
 
         algorithm = hparams['sampling_algorithm']
+        if self.train_shortcut_model and algorithm is not 'euler':
+            raise ValueError(f'Unsupported algorithm for Shortcut Model: {algorithm}.')
         infer_step = hparams['sampling_steps']
 
         if t_start < 1:

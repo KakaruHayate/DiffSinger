@@ -21,7 +21,10 @@ class RectifiedFlowONNX(RectifiedFlow):
         self.velocity_fn = value
 
     def sample_euler(self, x, t, dt: float, cond):
-        x += self.velocity_fn(x, t * self.time_scale_factor, cond) * dt
+        if self.train_shortcut_model:
+            x += self.velocity_fn(x, t * self.time_scale_factor, cond, self.time_scale_factor * dt) * dt
+        else:
+            x += self.velocity_fn(x, t * self.time_scale_factor, cond) * dt
         return x
 
     def norm_spec(self, x):
