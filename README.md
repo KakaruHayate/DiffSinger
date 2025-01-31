@@ -1,3 +1,11 @@
+# Shortcut Model
+
+参考：https://arxiv.org/abs/2410.12557
+
+代码参考：https://github.com/CNChTu/Diffusion-SVC/blob/v2.0_shortcut/diffusion/reflow/reflow_shortcut.py
+
+没测试，不知道能不能跑
+
 # DiffSinger (OpenVPI maintained version)
 
 [![arXiv](https://img.shields.io/badge/arXiv-Paper-<COLOR>.svg)](https://arxiv.org/abs/2105.02446)
