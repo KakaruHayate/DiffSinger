@@ -71,6 +71,7 @@ glide_types: [up, down]
 glide_embed_scale: 11.313708498984760  # sqrt(128)
 
 diffusion_type: reflow
+train_shortcut_model: true
 
 pitch_prediction_args:
   pitd_norm_min: -8.0

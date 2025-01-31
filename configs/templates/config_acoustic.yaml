@@ -53,6 +53,7 @@ augmentation_args:
 
 # diffusion and shallow diffusion
 diffusion_type: reflow
+train_shortcut_model: true
 use_shallow_diffusion: true
 T_start: 0.4
 T_start_infer: 0.4
