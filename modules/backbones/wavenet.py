@@ -49,7 +49,7 @@ class ResidualBlock(nn.Module):
 
 
 class WaveNet(nn.Module):
-    def __init__(self, in_dims, n_feats, *, num_layers=20, num_channels=256, dilation_cycle_length=4):
+    def __init__(self, in_dims, n_feats, *, num_layers=20, num_channels=256, dilation_cycle_length=4, shortcut=False):
         super().__init__()
         self.in_dims = in_dims
         self.n_feats = n_feats
@@ -60,6 +60,16 @@ class WaveNet(nn.Module):
             nn.Mish(),
             nn.Linear(num_channels * 4, num_channels)
         )
+        self.shortcut = shortcut
+        if self.shortcut:
+            self.stepsize_embedding = nn.Sequential(
+                SinusoidalPosEmb(num_channels),
+                nn.Linear(num_channels, num_channels * 4),
+                nn.Mish(),
+                nn.Linear(num_channels * 4, num_channels),
+            )
+        else:
+            self.stepsize_embedding = None
         self.residual_layers = nn.ModuleList([
             ResidualBlock(
                 encoder_hidden=hparams['hidden_size'],
@@ -72,7 +82,7 @@ class WaveNet(nn.Module):
         self.output_projection = Conv1d(num_channels, in_dims * n_feats, 1)
         nn.init.zeros_(self.output_projection.weight)
 
-    def forward(self, spec, diffusion_step, cond):
+    def forward(self, spec, diffusion_step, cond, d_step=None):
         """
         :param spec: [B, F, M, T]
         :param diffusion_step: [B, 1]
@@ -88,6 +98,8 @@ class WaveNet(nn.Module):
         x = F.relu(x)
         diffusion_step = self.diffusion_embedding(diffusion_step)
         diffusion_step = self.mlp(diffusion_step)
+        if self.stepsize_embedding is not None and d_step is not None:
+            diffusion_step += self.stepsize_embedding(d_step)
         skip = []
         for layer in self.residual_layers:
             x, skip_connection = layer(x, cond, diffusion_step)

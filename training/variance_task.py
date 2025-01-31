@@ -18,6 +18,10 @@ from utils.plot import dur_to_figure, pitch_note_to_figure, curve_to_figure
 matplotlib.use('Agg')
 
 
+def build_sc_loss():
+    return torch.nn.MSELoss()
+
+
 class VarianceDataset(BaseDataset):
     def __init__(self, prefix, preload=False):
         super(VarianceDataset, self).__init__(prefix, hparams['dataset_size_key'], preload)
@@ -94,6 +98,8 @@ class VarianceTask(BaseTask):
         if self.predict_pitch:
             self.lambda_pitch_loss = hparams['lambda_pitch_loss']
 
+        self.train_shortcut_model = hparams.get('train_shortcut_model', False)
+
         predict_energy = hparams['predict_energy']
         predict_breathiness = hparams['predict_breathiness']
         predict_voicing = hparams['predict_voicing']
@@ -137,6 +143,8 @@ class VarianceTask(BaseTask):
                 self.pitch_loss = RectifiedFlowLoss(
                     loss_type=hparams['main_loss_type'], log_norm=hparams['main_loss_log_norm']
                 )
+                if self.train_shortcut_model:
+                    self.pitch_sc_loss = build_sc_loss()
             else:
                 raise ValueError(f'Unknown diffusion type: {self.diffusion_type}')
             self.register_validation_loss('pitch_loss')
@@ -148,6 +156,8 @@ class VarianceTask(BaseTask):
                 self.var_loss = RectifiedFlowLoss(
                     loss_type=hparams['main_loss_type'], log_norm=hparams['main_loss_log_norm']
                 )
+                if self.train_shortcut_model:
+                    self.var_sc_loss = build_sc_loss()
             else:
                 raise ValueError(f'Unknown diffusion type: {self.diffusion_type}')
             self.register_validation_loss('var_loss')
@@ -215,10 +225,18 @@ class VarianceTask(BaseTask):
                         pitch_x_recon, pitch_noise, non_padding=non_padding
                     )
                 elif self.diffusion_type == 'reflow':
-                    pitch_v_pred, pitch_v_gt, t = pitch_pred
-                    pitch_loss = self.pitch_loss(
-                        pitch_v_pred, pitch_v_gt, t=t, non_padding=non_padding
-                    )
+                    if self.train_shortcut_model:
+                        pitch_v_pred, pitch_v_gt, t, pitch_v_mean_sc, pitch_v_pred_sc = pitch_pred
+                        pitch_loss = self.pitch_loss(
+                            pitch_v_pred, pitch_v_gt, t=t, non_padding=non_padding
+                        )
+                        pitch_sc_loss = self.pitch_sc_loss(pitch_v_mean_sc, pitch_v_pred_sc)
+                        losses['pitch_sc_loss'] = pitch_sc_loss
+                    else:
+                        pitch_v_pred, pitch_v_gt, t = pitch_pred
+                        pitch_loss = self.pitch_loss(
+                            pitch_v_pred, pitch_v_gt, t=t, non_padding=non_padding
+                        )
                 else:
                     raise ValueError(f"Unknown diffusion type: {self.diffusion_type}")
                 losses['pitch_loss'] = self.lambda_pitch_loss * pitch_loss
@@ -229,10 +247,18 @@ class VarianceTask(BaseTask):
                         var_x_recon, var_noise, non_padding=non_padding
                     )
                 elif self.diffusion_type == 'reflow':
-                    var_v_pred, var_v_gt, t = variances_pred
-                    var_loss = self.var_loss(
-                        var_v_pred, var_v_gt, t=t, non_padding=non_padding
-                    )
+                    if self.train_shortcut_model:
+                        var_v_pred, var_v_gt, t, var_v_mean_sc, var_v_pred_sc = variances_pred
+                        var_loss = self.var_loss(
+                            var_v_pred, var_v_gt, t=t, non_padding=non_padding
+                        )
+                        var_sc_loss = self.var_sc_loss(var_v_mean_sc, var_v_pred_sc)
+                        losses['var_sc_loss'] = var_sc_loss
+                    else:
+                        var_v_pred, var_v_gt, t = variances_pred
+                        var_loss = self.var_loss(
+                            var_v_pred, var_v_gt, t=t, non_padding=non_padding
+                        )
                 else:
                     raise ValueError(f"Unknown diffusion type: {self.diffusion_type}")
                 losses['var_loss'] = self.lambda_var_loss * var_loss

@@ -19,6 +19,7 @@ class RectifiedFlow(nn.Module):
         self.out_dims = out_dims
         self.num_feats = num_feats
         self.use_shallow_diffusion = hparams.get('use_shallow_diffusion', False)
+        self.train_shortcut_model = hparams.get('train_shortcut_model', False)
         if self.use_shallow_diffusion:
             assert 0. <= t_start <= 1., 'T_start should be in [0, 1].'
         else:
@@ -36,9 +37,24 @@ class RectifiedFlow(nn.Module):
     def p_losses(self, x_end, t, cond):
         x_start = torch.randn_like(x_end)
         x_t = x_start + t[:, None, None, None] * (x_end - x_start)
-        v_pred = self.velocity_fn(x_t, t * self.time_scale_factor, cond)
+        if self.train_shortcut_model:
+            d = torch.zeros_like(t)
+        else:
+            d = None
+        v_pred = self.velocity_fn(x_t, t * self.time_scale_factor, cond, d)
 
         return v_pred, x_end - x_start
+
+    def p_sc_losses(self, x_end, t, d, cond):
+        x_start = torch.randn_like(x_end)
+        x_t = x_start + t[:, None, None, None] * (x_end - x_start)
+        v_t = self.velocity_fn(x_t, t * self.time_scale_factor, cond, d * self.time_scale_factor)
+        x_t2 = x_t + v_t * d[:, None, None, None]
+        v_t2 = self.velocity_fn(x_t, (t + d) * self.time_scale_factor, cond, d * self.time_scale_factor)
+        v_mean = 0.5 * (v_t + v_t2).detach()
+        v_pred = self.velocity_fn(x_t, t * self.time_scale_factor, cond, d * self.time_scale_factor * 2)
+        
+        return v_mean, v_pred
 
     def forward(self, condition, gt_spec=None, src_spec=None, infer=True):
         cond = condition.transpose(1, 2)
@@ -50,8 +66,16 @@ class RectifiedFlow(nn.Module):
             if self.num_feats == 1:
                 spec = spec[:, None, :, :]  # [B, F=1, M, T]
             t = self.t_start + (1.0 - self.t_start) * torch.rand((b,), device=device)
-            v_pred, v_gt = self.p_losses(spec, t, cond=cond)
-            return v_pred, v_gt, t
+            if self.train_shortcut_model:
+                t_rf = torch.clip(t[b // 4 :], 1e-7, 1-1e-7)
+                v_pred, v_gt = self.p_losses(spec[b // 4 :], t_rf, cond=cond[b //4 :])
+                t_sc = torch.clip(t[: b // 4], 0, 1-1e-3)
+                d = 0.5 * (1.0 - t_sc) * torch.rand(b // 4, device=device)
+                v_mean_sc, v_pred_sc = self.p_sc_losses(spec[: b // 4], t_sc, d, cond[: b // 4].detach())
+                return v_pred, v_gt, t, v_mean_sc, v_pred_sc
+            else:
+                v_pred, v_gt = self.p_losses(spec, t, cond=cond)
+                return v_pred, v_gt, t
         else:
             # src_spec: [B, T, M] or [B, F, T, M]
             if src_spec is not None:

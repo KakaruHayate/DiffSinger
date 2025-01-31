@@ -102,7 +102,7 @@ class LYNXNetResidualLayer(nn.Module):
 
 class LYNXNet(nn.Module):
     def __init__(self, in_dims, n_feats, *, num_layers=6, num_channels=512, expansion_factor=2, kernel_size=31,
-                 activation='PReLU', dropout=0.0, strong_cond=False):
+                 activation='PReLU', dropout=0.0, strong_cond=False, shortcut=False):
         """
         LYNXNet(Linear Gated Depthwise Separable Convolution Network)
         TIPS:You can control the style of the generated results by modifying the 'activation', 
@@ -120,6 +120,16 @@ class LYNXNet(nn.Module):
             nn.GELU(),
             nn.Linear(num_channels * 4, num_channels),
         )
+        self.shortcut = shortcut
+        if self.shortcut:
+            self.stepsize_embedding = nn.Sequential(
+                SinusoidalPosEmb(num_channels),
+                nn.Linear(num_channels, num_channels * 4),
+                nn.GELU(),
+                nn.Linear(num_channels * 4, num_channels),
+            )
+        else:
+            self.stepsize_embedding = None
         self.residual_layers = nn.ModuleList(
             [
                 LYNXNetResidualLayer(
@@ -138,7 +148,7 @@ class LYNXNet(nn.Module):
         self.strong_cond = strong_cond
         nn.init.zeros_(self.output_projection.weight)
 
-    def forward(self, spec, diffusion_step, cond):
+    def forward(self, spec, diffusion_step, cond, d_step=None):
         """
         :param spec: [B, F, M, T]
         :param diffusion_step: [B, 1]
@@ -156,6 +166,8 @@ class LYNXNet(nn.Module):
             x = F.gelu(x)
 
         diffusion_step = self.diffusion_embedding(diffusion_step).unsqueeze(-1)
+        if self.stepsize_embedding is not None and d_step is not None:
+            diffusion_step += self.stepsize_embedding(d_step).unsqueeze(-1)
 
         for layer in self.residual_layers:
             x = layer(x, cond, diffusion_step, front_cond_inject=self.strong_cond)

@@ -19,6 +19,10 @@ from utils.plot import spec_to_figure
 matplotlib.use('Agg')
 
 
+def build_sc_loss():
+    return torch.nn.MSELoss()
+
+
 class AcousticDataset(BaseDataset):
     def __init__(self, prefix, preload=False):
         super(AcousticDataset, self).__init__(prefix, hparams['dataset_size_key'], preload)
@@ -75,6 +79,8 @@ class AcousticTask(BaseTask):
             self.train_aux_decoder = self.shallow_args['train_aux_decoder']
             self.train_diffusion = self.shallow_args['train_diffusion']
 
+        self.train_shortcut_model = hparams.get('train_shortcut_model', False)
+
         self.use_vocoder = hparams['infer'] or hparams['val_with_vocoder']
         if self.use_vocoder:
             self.vocoder: BaseVocoder = get_vocoder_cls(hparams)()
@@ -108,6 +114,8 @@ class AcousticTask(BaseTask):
             self.mel_loss = RectifiedFlowLoss(
                 loss_type=hparams['main_loss_type'], log_norm=hparams['main_loss_log_norm']
             )
+            if self.train_shortcut_model:
+                self.sc_loss = build_sc_loss()
         else:
             raise ValueError(f"Unknown diffusion type: {self.diffusion_type}")
         self.register_validation_loss('mel_loss')
@@ -151,8 +159,14 @@ class AcousticTask(BaseTask):
                     x_recon, x_noise = output.diff_out
                     mel_loss = self.mel_loss(x_recon, x_noise, non_padding=non_padding)
                 elif self.diffusion_type == 'reflow':
-                    v_pred, v_gt, t = output.diff_out
-                    mel_loss = self.mel_loss(v_pred, v_gt, t=t, non_padding=non_padding)
+                    if self.train_shortcut_model:
+                        v_pred, v_gt, t, v_mean_sc, v_pred_sc = output.diff_out
+                        mel_loss = self.mel_loss(v_pred, v_gt, t=t, non_padding=non_padding)
+                        sc_loss = self.sc_loss(v_mean_sc, v_pred_sc)
+                        losses['sc_loss'] = sc_loss
+                    else:
+                        v_pred, v_gt, t = output.diff_out
+                        mel_loss = self.mel_loss(v_pred, v_gt, t=t, non_padding=non_padding)
                 else:
                     raise ValueError(f"Unknown diffusion type: {self.diffusion_type}")
                 losses['mel_loss'] = mel_loss
