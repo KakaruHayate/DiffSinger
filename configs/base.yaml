@@ -5,7 +5,7 @@ task_cls: null
 # dataset
 #############
 sort_by_len: true
-datasets: []
+raw_data_dir: null
 binary_data_dir: null
 binarizer_cls: null
 binarization_args:

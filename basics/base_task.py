@@ -8,6 +8,7 @@ from typing import Dict
 import matplotlib
 
 import utils
+from utils.text_encoder import TokenTextEncoder
 
 matplotlib.use('Agg')
 
@@ -23,7 +24,7 @@ from utils.training_utils import (
     DsBatchSampler, DsTensorBoardLogger,
     get_latest_checkpoint_path, get_strategy
 )
-from utils.phoneme_utils import load_phoneme_dictionary
+from utils.phoneme_utils import locate_dictionary, build_phoneme_list
 
 torch.multiprocessing.set_sharing_strategy(os.getenv('TORCH_SHARE_STRATEGY', 'file_system'))
 
@@ -70,7 +71,7 @@ class BaseTask(pl.LightningModule):
         self.skip_immediate_validation = False
         self.skip_immediate_ckpt_save = False
 
-        self.phoneme_dictionary = load_phoneme_dictionary()
+        self.phone_encoder = self.build_phone_encoder()
         self.build_model()
 
         self.valid_losses: Dict[str, Metric] = {}
@@ -163,6 +164,11 @@ class BaseTask(pl.LightningModule):
             return state_dict
         else:
             raise RuntimeError("")
+
+    @staticmethod
+    def build_phone_encoder():
+        phone_list = build_phoneme_list()
+        return TokenTextEncoder(vocab_list=phone_list)
 
     def _build_model(self):
         raise NotImplementedError()
@@ -442,21 +448,21 @@ class BaseTask(pl.LightningModule):
         if not hparams['infer']:  # train
             @rank_zero_only
             def train_payload_copy():
-                # Copy files to work_dir
+                # Copy spk_map.json and dictionary.txt to work dir
                 binary_dir = pathlib.Path(hparams['binary_data_dir'])
-                spk_map_dst = work_dir / 'spk_map.json'
+                spk_map = work_dir / 'spk_map.json'
                 spk_map_src = binary_dir / 'spk_map.json'
-                shutil.copy(spk_map_src, spk_map_dst)
-                print(f'| Copied spk map to {spk_map_dst}.')
-                lang_map_dst = work_dir / 'lang_map.json'
-                lang_map_src = binary_dir / 'lang_map.json'
-                shutil.copy(lang_map_src, lang_map_dst)
-                print(f'| Copied lang map to {lang_map_dst}.')
-                for lang in hparams['dictionaries'].keys():
-                    dict_dst = work_dir / f'dictionary-{lang}.txt'
-                    dict_src = binary_dir / f'dictionary-{lang}.txt'
-                    shutil.copy(dict_src, dict_dst)
-                    print(f'| Copied dictionary for language \'{lang}\' to {dict_dst}.')
+                if not spk_map.exists() and spk_map_src.exists():
+                    shutil.copy(spk_map_src, spk_map)
+                    print(f'| Copied spk map to {spk_map}.')
+                dictionary = work_dir / 'dictionary.txt'
+                dict_src = binary_dir / 'dictionary.txt'
+                if not dictionary.exists():
+                    if dict_src.exists():
+                        shutil.copy(dict_src, dictionary)
+                    else:
+                        shutil.copy(locate_dictionary(), dictionary)
+                    print(f'| Copied dictionary to {dictionary}.')
 
             train_payload_copy()
             trainer.fit(task, ckpt_path=get_latest_checkpoint_path(work_dir))

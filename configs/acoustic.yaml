@@ -2,11 +2,17 @@ base_config:
   - configs/base.yaml
 
 task_cls: training.acoustic_task.AcousticTask
-
-dictionaries: {}
-extra_phonemes: []
-merged_phoneme_groups: []
-datasets: []
+num_spk: 1
+speakers:
+  - opencpop
+spk_ids: []
+test_prefixes: [
+    '2044',
+    '2086',
+    '2092',
+    '2093',
+    '2100',
+]
 
 vocoder: NsfHifiGAN
 vocoder_ckpt: checkpoints/nsf_hifigan_44.1k_hop512_128bin_2024.02/model.ckpt
@@ -35,8 +41,10 @@ augmentation_args:
     range: [0.5, 2.]
     scale: 0.75
 
+raw_data_dir: 'data/opencpop/raw'
 binary_data_dir: 'data/opencpop/binary'
 binarizer_cls: preprocessing.acoustic_binarizer.AcousticBinarizer
+dictionary: dictionaries/opencpop-extension.txt
 spec_min: [-12]
 spec_max: [0]
 mel_vmin: -14.
@@ -47,10 +55,7 @@ breathiness_smooth_width: 0.12
 voicing_smooth_width: 0.12
 tension_smooth_width: 0.12
 
-use_lang_id: false
-num_lang: 1
 use_spk_id: false
-num_spk: 1
 use_energy_embed: false
 use_breathiness_embed: false
 use_voicing_embed: false
@@ -63,6 +68,7 @@ time_scale_factor: 1000
 timesteps: 1000
 max_beta: 0.02
 enc_ffn_kernel_size: 3
+ffn_act: swiglu
 use_rope: true
 rel_pos: true
 sampling_algorithm: euler

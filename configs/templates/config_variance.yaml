@@ -1,43 +1,29 @@
 base_config:
   - configs/variance.yaml
 
-dictionaries:
-  zh: dictionaries/opencpop-extension.txt
-extra_phonemes: []
-merged_phoneme_groups: []
-
-datasets:
-  - raw_data_dir: data/xxx1/raw
-    speaker: speaker1
-    spk_id: 0
-    language: zh
-    test_prefixes:
-      - wav1
-      - wav2
-      - wav3
-      - wav4
-      - wav5
-  - raw_data_dir: data/xxx2/raw
-    speaker: speaker2
-    spk_id: 1
-    language: zh
-    test_prefixes:
-      - wav1
-      - wav2
-      - wav3
-      - wav4
-      - wav5
-
+raw_data_dir:
+  - data/xxx1/raw
+  - data/xxx2/raw
+speakers:
+  - speaker1
+  - speaker2
+spk_ids: []
+test_prefixes:
+  - wav1
+  - wav2
+  - wav3
+  - wav4
+  - wav5
+dictionary: dictionaries/opencpop-extension.txt
 binary_data_dir: data/xxx/binary
 binarization_args:
   num_workers: 0
+
 pe: parselmouth
 pe_ckpt: 'checkpoints/rmvpe/model.pt'
 hnsep: vr
 hnsep_ckpt: 'checkpoints/vr/model.pt'
 
-use_lang_id: false
-num_lang: 1
 use_spk_id: false
 num_spk: 1
 # NOTICE: before enabling variance modules, please read the docs at
@@ -64,6 +50,7 @@ tension_logit_min: -10.0
 tension_logit_max: 10.0
 
 enc_ffn_kernel_size: 3
+ffn_act: swiglu
 use_rope: true
 hidden_size: 256
 dur_prediction_args:

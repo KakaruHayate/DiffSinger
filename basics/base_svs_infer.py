@@ -29,7 +29,6 @@ class BaseSVSInfer:
         self.device = device
         self.timestep = hparams['hop_size'] / hparams['audio_sample_rate']
         self.spk_map = {}
-        self.lang_map = {}
         self.model: torch.nn.Module = None
 
     def build_model(self, ckpt_steps=None) -> torch.nn.Module:
@@ -51,11 +50,7 @@ class BaseSVSInfer:
         spk_mix_map = param_src.get(param_key)  # { spk_name: value } or { spk_name: "value value value ..." }
         dynamic = False
         if spk_mix_map is None:
-            assert len(self.spk_map) == 1, (
-                "This is a multi-speaker model. "
-                "Please specify a speaker or speaker mix by --spk option."
-            )
-            # Get the only speaker
+            # Get the first speaker
             for name in self.spk_map.keys():
                 spk_mix_map = {name: 1.0}
                 break
