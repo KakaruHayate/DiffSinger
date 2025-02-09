@@ -83,12 +83,11 @@ class DiffSingerAcoustic(CategorizedModule, ParameterAdaptorModule):
 
     def forward(
             self, txt_tokens, mel2ph, f0, key_shift=None, speed=None,
-            spk_embed_id=None, languages=None, gt_mel=None, infer=True, **kwargs
+            spk_embed_id=None, gt_mel=None, infer=True, **kwargs
     ) -> ShallowDiffusionOutput:
         condition = self.fs2(
             txt_tokens, mel2ph, f0, key_shift=key_shift, speed=speed,
-            spk_embed_id=spk_embed_id, languages=languages,
-            **kwargs
+            spk_embed_id=spk_embed_id, **kwargs
         )
         if infer:
             if self.use_shallow_diffusion:
@@ -200,8 +199,7 @@ class DiffSingerVariance(CategorizedModule, ParameterAdaptorModule):
             note_midi=None, note_rest=None, note_dur=None, note_glide=None, mel2note=None,
             base_pitch=None, pitch=None, pitch_expr=None, pitch_retake=None,
             variance_retake: Dict[str, Tensor] = None,
-            spk_id=None, languages=None,
-            infer=True, **kwargs
+            spk_id=None, infer=True, **kwargs
     ):
         if self.use_spk_id:
             ph_spk_mix_embed = kwargs.get('ph_spk_mix_embed')
@@ -217,8 +215,7 @@ class DiffSingerVariance(CategorizedModule, ParameterAdaptorModule):
         encoder_out, dur_pred_out = self.fs2(
             txt_tokens, midi=midi, ph2word=ph2word,
             ph_dur=ph_dur, word_dur=word_dur,
-            spk_embed=ph_spk_embed, languages=languages,
-            infer=infer
+            spk_embed=ph_spk_embed, infer=infer
         )
 
         if not self.predict_pitch and not self.predict_variances:

@@ -104,28 +104,47 @@ class SinusoidalPositionalEmbedding(nn.Module):
         return int(1e5)  # an arbitrary large number
 
 
+class SwiGLU(nn.Module):
+    # Swish-Applies the gated linear unit function.
+    def __init__(self, dim=-1):
+        super().__init__()
+        self.dim = dim
+
+    def forward(self, x):
+        # out, gate = x.chunk(2, dim=self.dim)
+        # Using torch.split instead of chunk for ONNX export compatibility.
+        out, gate = torch.split(x, x.size(self.dim) // 2, dim=self.dim)
+        return out * F.silu(gate)
+
+
 class TransformerFFNLayer(nn.Module):
     def __init__(self, hidden_size, filter_size, kernel_size=1, dropout=0., act='gelu'):
         super().__init__()
         self.kernel_size = kernel_size
         self.dropout = dropout
         self.act = act
-        self.ffn_1 = nn.Conv1d(hidden_size, filter_size, kernel_size, padding=kernel_size // 2)
+        filter_size_1 = filter_size
         if self.act == 'relu':
             self.act_fn = ReLU()
         elif self.act == 'gelu':
             self.act_fn = GELU()
         elif self.act == 'swish':
             self.act_fn = SiLU()
+        elif self.act == 'swiglu':
+            self.act_fn = SwiGLU()
+            filter_size_1 = filter_size * 2
+        else:
+            raise ValueError(f'{act} is not a valid activation')
+        self.ffn_1 = nn.Conv1d(hidden_size, filter_size_1, kernel_size, padding=kernel_size // 2)
         self.ffn_2 = XavierUniformInitLinear(filter_size, hidden_size)
 
     def forward(self, x):
-        # x: T x B x C
+        # x: B x T x C
         x = self.ffn_1(x.transpose(1, 2)).transpose(1, 2)
         x = x * self.kernel_size ** -0.5
 
         x = self.act_fn(x)
-        x = F.dropout(x, self.dropout, training=self.training)
+        #x = F.dropout(x, self.dropout, training=self.training)
         x = self.ffn_2(x)
         return x
 
@@ -238,7 +257,7 @@ class EncSALayer(nn.Module):
         residual = x
         x = self.layer_norm2(x)
         x = self.ffn(x)
-        x = F.dropout(x, self.dropout, training=self.training)
+        #x = F.dropout(x, self.dropout, training=self.training)
         x = residual + x
         x = x * (1 - encoder_padding_mask.float())[..., None]
         return x
