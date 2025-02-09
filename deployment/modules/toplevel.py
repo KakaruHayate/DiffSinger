@@ -18,13 +18,12 @@ from utils.hparams import hparams
 
 
 class DiffSingerAcousticONNX(DiffSingerAcoustic):
-    def __init__(self, vocab_size, out_dims, cross_lingual_token_idx=None):
+    def __init__(self, vocab_size, out_dims):
         super().__init__(vocab_size, out_dims)
         del self.fs2
         del self.diffusion
         self.fs2 = FastSpeech2AcousticONNX(
-            vocab_size=vocab_size,
-            cross_lingual_token_idx=cross_lingual_token_idx
+            vocab_size=vocab_size
         )
         if self.diffusion_type == 'ddpm':
             self.diffusion = GaussianDiffusionONNX(
@@ -66,13 +65,11 @@ class DiffSingerAcousticONNX(DiffSingerAcoustic):
             variances: dict,
             gender: Tensor = None,
             velocity: Tensor = None,
-            spk_embed: Tensor = None,
-            languages: Tensor = None
+            spk_embed: Tensor = None
     ):
         condition = self.fs2(
             tokens, durations, f0, variances=variances,
-            gender=gender, velocity=velocity, spk_embed=spk_embed,
-            languages=languages
+            gender=gender, velocity=velocity, spk_embed=spk_embed
         )
         if self.use_shallow_diffusion:
             aux_mel_pred = self.aux_decoder(condition, infer=True)
@@ -130,12 +127,11 @@ class DiffSingerAcousticONNX(DiffSingerAcoustic):
 
 
 class DiffSingerVarianceONNX(DiffSingerVariance):
-    def __init__(self, vocab_size, cross_lingual_token_idx=None):
+    def __init__(self, vocab_size):
         super().__init__(vocab_size=vocab_size)
         del self.fs2
         self.fs2 = FastSpeech2VarianceONNX(
-            vocab_size=vocab_size,
-            cross_lingual_token_idx=cross_lingual_token_idx
+            vocab_size=vocab_size
         )
         self.hidden_size = hparams['hidden_size']
         if self.predict_pitch:
@@ -198,13 +194,13 @@ class DiffSingerVarianceONNX(DiffSingerVariance):
             encoder_out += self.frozen_spk_embed
         return encoder_out
 
-    def forward_linguistic_encoder_word(self, tokens, word_div, word_dur, languages=None):
-        encoder_out, x_masks = self.fs2.forward_encoder_word(tokens, word_div, word_dur, languages=languages)
+    def forward_linguistic_encoder_word(self, tokens, word_div, word_dur):
+        encoder_out, x_masks = self.fs2.forward_encoder_word(tokens, word_div, word_dur)
         encoder_out = self.embed_frozen_spk(encoder_out)
         return encoder_out, x_masks
 
-    def forward_linguistic_encoder_phoneme(self, tokens, ph_dur, languages=None):
-        encoder_out, x_masks = self.fs2.forward_encoder_phoneme(tokens, ph_dur, languages=languages)
+    def forward_linguistic_encoder_phoneme(self, tokens, ph_dur):
+        encoder_out, x_masks = self.fs2.forward_encoder_phoneme(tokens, ph_dur)
         encoder_out = self.embed_frozen_spk(encoder_out)
         return encoder_out, x_masks
 

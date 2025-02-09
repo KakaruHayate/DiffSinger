@@ -1,4 +1,4 @@
-import json
+import shutil
 from pathlib import Path
 from typing import Union, List, Tuple, Dict
 
@@ -12,7 +12,8 @@ from deployment.modules.toplevel import DiffSingerVarianceONNX
 from modules.fastspeech.param_adaptor import VARIANCE_CHECKLIST
 from utils import load_ckpt, onnx_helper, remove_suffix
 from utils.hparams import hparams
-from utils.phoneme_utils import load_phoneme_dictionary
+from utils.phoneme_utils import locate_dictionary, build_phoneme_list
+from utils.text_encoder import TokenTextEncoder
 
 
 class DiffSingerVarianceExporter(BaseExporter):
@@ -31,9 +32,7 @@ class DiffSingerVarianceExporter(BaseExporter):
         self.model_name: str = hparams['exp_name']
         self.ckpt_steps: int = ckpt_steps
         self.spk_map: dict = self.build_spk_map()
-        self.lang_map: dict = self.build_lang_map()
-        self.phoneme_dictionary = load_phoneme_dictionary()
-        self.use_lang_id = hparams.get('use_lang_id', False) and len(self.phoneme_dictionary.cross_lingual_phonemes) > 0
+        self.vocab = TokenTextEncoder(vocab_list=build_phoneme_list())
         self.model = self.build_model()
         self.linguistic_encoder_cache_path = self.cache_dir / 'linguistic.onnx'
         self.dur_predictor_cache_path = self.cache_dir / 'dur.onnx'
@@ -84,11 +83,7 @@ class DiffSingerVarianceExporter(BaseExporter):
 
     def build_model(self) -> DiffSingerVarianceONNX:
         model = DiffSingerVarianceONNX(
-            vocab_size=len(self.phoneme_dictionary),
-            cross_lingual_token_idx=sorted({
-                self.phoneme_dictionary.encode_one(p)
-                for p in self.phoneme_dictionary.cross_lingual_phonemes
-            })
+            vocab_size=len(self.vocab)
         ).eval().to(self.device)
         load_ckpt(model, hparams['work_dir'], ckpt_steps=self.ckpt_steps,
                   prefix_in_ckpt='model', strict=True, device=self.device)
@@ -147,17 +142,15 @@ class DiffSingerVarianceExporter(BaseExporter):
                 path / f'{self.model_name}.{spk[0]}.emb',
                 self._perform_spk_mix(spk[1])
             )
-        self.export_dictionaries(path)
-        self._export_phonemes(path)
+        self._export_dictionary(path / 'dictionary.txt')
+        self._export_phonemes((path / f'{self.model_name}.phonemes.txt'))
 
         model_name = self.model_name
         if self.freeze_spk is not None:
             model_name += '.' + self.freeze_spk[0]
         dsconfig = {
             # basic configs
-            'phonemes': f'{self.model_name}.phonemes.json',
-            'languages': f'{self.model_name}.languages.json',
-            'use_lang_id': self.use_lang_id,
+            'phonemes': f'{self.model_name}.phonemes.txt',
             'linguistic': f'{model_name}.linguistic.onnx',
             'hidden_size': self.model.hidden_size,
             'predict_dur': self.model.predict_dur,
@@ -193,7 +186,6 @@ class DiffSingerVarianceExporter(BaseExporter):
         ph_dur = torch.LongTensor([[3, 5, 2, 1, 4]]).to(self.device)
         word_div = torch.LongTensor([[2, 2, 1]]).to(self.device)
         word_dur = torch.LongTensor([[8, 3, 4]]).to(self.device)
-        languages = torch.LongTensor([[0] * 5]).to(self.device)
         encoder_out = torch.rand(1, 5, hparams['hidden_size'], dtype=torch.float32, device=self.device)
         x_masks = tokens == 0
         ph_midi = torch.LongTensor([[60] * 5]).to(self.device)
@@ -206,7 +198,6 @@ class DiffSingerVarianceExporter(BaseExporter):
                 1: 'n_tokens'
             }
         }
-        input_lang_id = self.use_lang_id
         input_spk_embed = hparams['use_spk_id'] and not self.freeze_spk
 
         print(f'Exporting {self.fs2_class_name}...')
@@ -216,15 +207,13 @@ class DiffSingerVarianceExporter(BaseExporter):
                 (
                     tokens,
                     word_div,
-                    word_dur,
-                    *([languages] if input_lang_id else [])
+                    word_dur
                 ),
                 self.linguistic_encoder_cache_path,
                 input_names=[
                     'tokens',
                     'word_div',
-                    'word_dur',
-                    *(['languages'] if input_lang_id else [])
+                    'word_dur'
                 ],
                 output_names=encoder_output_names,
                 dynamic_axes={
@@ -237,8 +226,7 @@ class DiffSingerVarianceExporter(BaseExporter):
                     'word_dur': {
                         1: 'n_words'
                     },
-                    **encoder_common_axes,
-                    **({'languages': {1: 'n_tokens'}} if input_lang_id else {})
+                    **encoder_common_axes
                 },
                 opset_version=15
             )
@@ -282,14 +270,12 @@ class DiffSingerVarianceExporter(BaseExporter):
                 self.model.view_as_linguistic_encoder(),
                 (
                     tokens,
-                    ph_dur,
-                    *([languages] if input_lang_id else [])
+                    ph_dur
                 ),
                 self.linguistic_encoder_cache_path,
                 input_names=[
                     'tokens',
-                    'ph_dur',
-                    *(['languages'] if input_lang_id else [])
+                    'ph_dur'
                 ],
                 output_names=encoder_output_names,
                 dynamic_axes={
@@ -299,8 +285,7 @@ class DiffSingerVarianceExporter(BaseExporter):
                     'ph_dur': {
                         1: 'n_tokens'
                     },
-                    **encoder_common_axes,
-                    **({'languages': {1: 'n_tokens'}} if input_lang_id else {})
+                    **encoder_common_axes
                 },
                 opset_version=15
             )
@@ -652,10 +637,6 @@ class DiffSingerVarianceExporter(BaseExporter):
         print(f'Running ONNX Simplifier on {self.fs2_class_name}...')
         linguistic, check = onnxsim.simplify(linguistic, include_subgraph=True)
         assert check, 'Simplified ONNX model could not be validated'
-        onnx_helper.model_reorder_io_list(
-            linguistic, 'input',
-            target_name='languages', insert_after_name='tokens'
-        )
         print(f'| optimize graph: {self.fs2_class_name}')
         return linguistic
 
@@ -790,11 +771,11 @@ class DiffSingerVarianceExporter(BaseExporter):
             f.write(spk_embed.cpu().numpy().tobytes())
         print(f'| export spk embed => {path}')
 
+    # noinspection PyMethodMayBeStatic
+    def _export_dictionary(self, path: Path):
+        print(f'| export dictionary => {path}')
+        shutil.copy(locate_dictionary(), path)
+
     def _export_phonemes(self, path: Path):
-        ph_path = path / f'{self.model_name}.phonemes.json'
-        self.phoneme_dictionary.dump(ph_path)
-        print(f'| export phonemes => {ph_path}')
-        lang_path = path / f'{self.model_name}.languages.json'
-        with open(lang_path, 'w', encoding='utf8') as fw:
-            json.dump(self.lang_map, fw, ensure_ascii=False, indent=2)
-        print(f'| export languages => {lang_path}')
+        self.vocab.store_to_file(path)
+        print(f'| export phonemes => {path}')

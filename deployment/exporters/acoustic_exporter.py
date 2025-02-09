@@ -1,4 +1,4 @@
-import json
+import shutil
 from pathlib import Path
 from typing import List, Union, Tuple, Dict
 
@@ -12,7 +12,8 @@ from deployment.modules.toplevel import DiffSingerAcousticONNX
 from modules.fastspeech.param_adaptor import VARIANCE_CHECKLIST
 from utils import load_ckpt, onnx_helper, remove_suffix
 from utils.hparams import hparams
-from utils.phoneme_utils import load_phoneme_dictionary
+from utils.phoneme_utils import locate_dictionary, build_phoneme_list
+from utils.text_encoder import TokenTextEncoder
 
 
 class DiffSingerAcousticExporter(BaseExporter):
@@ -31,9 +32,7 @@ class DiffSingerAcousticExporter(BaseExporter):
         self.model_name: str = hparams['exp_name']
         self.ckpt_steps: int = ckpt_steps
         self.spk_map: dict = self.build_spk_map()
-        self.lang_map: dict = self.build_lang_map()
-        self.phoneme_dictionary = load_phoneme_dictionary()
-        self.use_lang_id = hparams.get('use_lang_id', False) and len(self.phoneme_dictionary.cross_lingual_phonemes) > 0
+        self.vocab = TokenTextEncoder(vocab_list=build_phoneme_list())
         self.model = self.build_model()
         self.fs2_aux_cache_path = self.cache_dir / (
             'fs2_aux.onnx' if self.model.use_shallow_diffusion else 'fs2.onnx'
@@ -81,12 +80,8 @@ class DiffSingerAcousticExporter(BaseExporter):
 
     def build_model(self) -> DiffSingerAcousticONNX:
         model = DiffSingerAcousticONNX(
-            vocab_size=len(self.phoneme_dictionary),
-            out_dims=hparams['audio_num_mel_bins'],
-            cross_lingual_token_idx=sorted({
-                self.phoneme_dictionary.encode_one(p)
-                for p in self.phoneme_dictionary.cross_lingual_phonemes
-            })
+            vocab_size=len(self.vocab),
+            out_dims=hparams['audio_num_mel_bins']
         ).eval().to(self.device)
         load_ckpt(model, hparams['work_dir'], ckpt_steps=self.ckpt_steps,
                   prefix_in_ckpt='model', strict=True, device=self.device)
@@ -116,17 +111,15 @@ class DiffSingerAcousticExporter(BaseExporter):
                 path / f'{self.model_name}.{spk[0]}.emb',
                 self._perform_spk_mix(spk[1])
             )
-        self.export_dictionaries(path)
-        self._export_phonemes(path)
+        self._export_dictionary(path / 'dictionary.txt')
+        self._export_phonemes(path / f'{self.model_name}.phonemes.txt')
 
         model_name = self.model_name
         if self.freeze_spk is not None:
             model_name += '.' + self.freeze_spk[0]
         dsconfig = {
             # basic configs
-            'phonemes': f'{self.model_name}.phonemes.json',
-            'languages': f'{self.model_name}.languages.json',
-            'use_lang_id': self.use_lang_id,
+            'phonemes': f'{self.model_name}.phonemes.txt',
             'acoustic': f'{model_name}.onnx',
             'hidden_size': hparams['hidden_size'],
             'vocoder': 'nsf_hifigan_44.1k_hop512_128bin_2024.02',
@@ -217,12 +210,6 @@ class DiffSingerAcousticExporter(BaseExporter):
             input_names.append('spk_embed')
             dynamix_axes['spk_embed'] = {
                 1: 'n_frames'
-            }
-        if self.use_lang_id:
-            kwargs['languages'] = torch.zeros_like(tokens)
-            input_names.append('languages')
-            dynamix_axes['languages'] = {
-                1: 'n_tokens'
             }
         dynamix_axes['condition'] = {
             1: 'n_frames'
@@ -347,10 +334,6 @@ class DiffSingerAcousticExporter(BaseExporter):
         print(f'Running ONNX Simplifier on {self.fs2_aux_class_name}...')
         fs2, check = onnxsim.simplify(fs2, include_subgraph=True)
         assert check, 'Simplified ONNX model could not be validated'
-        onnx_helper.model_reorder_io_list(
-            fs2, 'input',
-            target_name='languages', insert_after_name='tokens'
-        )
         print(f'| optimize graph: {self.fs2_aux_class_name}')
         return fs2
 
@@ -412,11 +395,11 @@ class DiffSingerAcousticExporter(BaseExporter):
             f.write(spk_embed.cpu().numpy().tobytes())
         print(f'| export spk embed => {path}')
 
+    # noinspection PyMethodMayBeStatic
+    def _export_dictionary(self, path: Path):
+        print(f'| export dictionary => {path}')
+        shutil.copy(locate_dictionary(), path)
+
     def _export_phonemes(self, path: Path):
-        ph_path = path / f'{self.model_name}.phonemes.json'
-        self.phoneme_dictionary.dump(ph_path)
-        print(f'| export phonemes => {ph_path}')
-        lang_path = path / f'{self.model_name}.languages.json'
-        with open(lang_path, 'w', encoding='utf8') as f:
-            json.dump(self.lang_map, f, ensure_ascii=False, indent=2)
-        print(f'| export languages => {lang_path}')
+        self.vocab.store_to_file(path)
+        print(f'| export phonemes => {path}')
