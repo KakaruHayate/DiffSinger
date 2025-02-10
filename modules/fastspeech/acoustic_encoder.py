@@ -19,7 +19,7 @@ class FastSpeech2Acoustic(nn.Module):
         self.use_lang_id = hparams.get('use_lang_id', False)
         if self.use_lang_id:
             self.lang_embed = Embedding(hparams['num_lang'] + 1, hparams['hidden_size'], padding_idx=0)
-            use_esm=hparams['use_esm']
+            use_esm=hparams.get('use_esm', False)
         else:
             use_esm=False
         self.dur_embed = Linear(1, hparams['hidden_size'])
@@ -27,7 +27,8 @@ class FastSpeech2Acoustic(nn.Module):
             hidden_size=hparams['hidden_size'], num_layers=hparams['enc_layers'],
             ffn_kernel_size=hparams['enc_ffn_kernel_size'], ffn_act=hparams['ffn_act'],
             dropout=hparams['dropout'], num_heads=hparams['num_heads'],
-            use_pos_embed=hparams['use_pos_embed'], rel_pos=hparams['rel_pos'], use_esm=use_esm
+            use_pos_embed=hparams['use_pos_embed'], rel_pos=hparams.get('rel_pos', False), use_esm=use_esm,
+            use_rope=hparams.get('use_rope', False)
         )
 
         self.pitch_embed = Linear(1, hparams['hidden_size'])
