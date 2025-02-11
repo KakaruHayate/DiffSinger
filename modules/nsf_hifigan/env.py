@@ -18,6 +18,8 @@ class AttrDict(dict):
         return super(AttrDict, self).__setitem__(key, value)
 
     def __getitem__(self, name):
+        if name not in super(AttrDict, self).keys():
+            return None
         return super(AttrDict, self).__getitem__(name)
 
     def __delitem__(self, name):

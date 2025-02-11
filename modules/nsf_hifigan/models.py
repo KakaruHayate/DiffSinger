@@ -137,7 +137,7 @@ class SineGen(torch.nn.Module):
         rad = f0 / self.sampling_rate * torch.arange(1, upp + 1, device=f0.device)
         rad2 = torch.fmod(rad[..., -1:].float() + 0.5, 1.0) - 0.5
         rad_acc = rad2.cumsum(dim=1).fmod(1.0).to(f0)
-        rad += F.pad(rad_acc, (0, 0, 1, -1))
+        rad += F.pad(rad_acc[:, :-1, :], (0, 0, 1, 0))
         rad = rad.reshape(f0.shape[0], -1, 1)
         rad = torch.multiply(rad, torch.arange(1, self.dim + 1, device=f0.device).reshape(1, 1, -1))
         rand_ini = torch.rand(1, 1, self.dim, device=f0.device)
@@ -209,46 +209,74 @@ class Generator(torch.nn.Module):
         self.h = h
         self.num_kernels = len(h.resblock_kernel_sizes)
         self.num_upsamples = len(h.upsample_rates)
-        self.m_source = SourceModuleHnNSF(
-            sampling_rate=h.sampling_rate,
-            harmonic_num=8
-        )
-        self.noise_convs = nn.ModuleList()
-        self.conv_pre = weight_norm(Conv1d(h.num_mels, h.upsample_initial_channel, 7, 1, padding=3))
-        resblock = ResBlock1 if h.resblock == '1' else ResBlock2
-
+        self.mini_nsf = h.mini_nsf
+            
+        if h.mini_nsf:
+            self.source_sr = h.sampling_rate / int(np.prod(h.upsample_rates[2: ]))
+            self.upp = int(np.prod(h.upsample_rates[: 2]))
+        else:
+            self.source_sr = h.sampling_rate
+            self.upp = int(np.prod(h.upsample_rates))
+            self.m_source = SourceModuleHnNSF(
+                sampling_rate=h.sampling_rate,
+                harmonic_num=8
+            )
+            self.noise_convs = nn.ModuleList()
+        
+        self.conv_pre = weight_norm(Conv1d(h.num_mels, h.upsample_initial_channel, 7, 1, padding=3))   
+        
         self.ups = nn.ModuleList()
-        for i, (u, k) in enumerate(zip(h.upsample_rates, h.upsample_kernel_sizes)):
-            c_cur = h.upsample_initial_channel // (2 ** (i + 1))
-            self.ups.append(weight_norm(
-                ConvTranspose1d(h.upsample_initial_channel // (2 ** i), h.upsample_initial_channel // (2 ** (i + 1)),
-                                k, u, padding=(k - u) // 2)))
-            if i + 1 < len(h.upsample_rates):  #
-                stride_f0 = int(np.prod(h.upsample_rates[i + 1:]))
-                self.noise_convs.append(Conv1d(
-                    1, c_cur, kernel_size=stride_f0 * 2, stride=stride_f0, padding=stride_f0 // 2))
-            else:
-                self.noise_convs.append(Conv1d(1, c_cur, kernel_size=1))
         self.resblocks = nn.ModuleList()
+        resblock = ResBlock1 if h.resblock == '1' else ResBlock2
         ch = h.upsample_initial_channel
-        for i in range(len(self.ups)):
+        for i, (u, k) in enumerate(zip(h.upsample_rates, h.upsample_kernel_sizes)):
             ch //= 2
+            self.ups.append(weight_norm(ConvTranspose1d(2 * ch, ch, k, u, padding=(k - u) // 2)))
             for j, (k, d) in enumerate(zip(h.resblock_kernel_sizes, h.resblock_dilation_sizes)):
                 self.resblocks.append(resblock(h, ch, k, d))
+            if not h.mini_nsf:
+                if i + 1 < len(h.upsample_rates):  #
+                    stride_f0 = int(np.prod(h.upsample_rates[i + 1:]))
+                    self.noise_convs.append(Conv1d(
+                        1, ch, kernel_size=stride_f0 * 2, stride=stride_f0, padding=stride_f0 // 2))
+                else:
+                    self.noise_convs.append(Conv1d(1, ch, kernel_size=1))
+            elif i == 1:
+                self.source_conv = Conv1d(1, ch, 1)
+                self.source_conv.apply(init_weights)
 
         self.conv_post = weight_norm(Conv1d(ch, 1, 7, 1, padding=3))
+        
         self.ups.apply(init_weights)
         self.conv_post.apply(init_weights)
-        self.upp = int(np.prod(h.upsample_rates))
-
+        
+    def fastsinegen(self, f0):
+        n = torch.arange(1, self.upp + 1, device=f0.device)
+        s0 = f0.unsqueeze(-1) / self.source_sr
+        ds0 = F.pad(s0[:, 1:, :] - s0[:, :-1, :], (0, 0, 0, 1))
+        rad = s0 * n + 0.5 * ds0 * n * (n - 1) / self.upp
+        rad2 = torch.fmod(rad[..., -1:].float() + 0.5, 1.0) - 0.5
+        rad_acc = rad2.cumsum(dim=1).fmod(1.0).to(f0)
+        rad += F.pad(rad_acc[:, :-1, :], (0, 0, 1, 0))
+        rad = rad.reshape(f0.shape[0], 1, -1)
+        sines = torch.sin(2 * np.pi * rad)
+        return sines
+        
     def forward(self, x, f0):
-        har_source = self.m_source(f0, self.upp).transpose(1, 2)
+        if self.mini_nsf:
+            har_source = self.fastsinegen(f0)
+        else:
+            har_source = self.m_source(f0, self.upp).transpose(1, 2)
         x = self.conv_pre(x)
         for i in range(self.num_upsamples):
             x = F.leaky_relu(x, LRELU_SLOPE)
             x = self.ups[i](x)
-            x_source = self.noise_convs[i](har_source)
-            x = x + x_source
+            if not self.mini_nsf:
+                x_source = self.noise_convs[i](har_source)
+                x = x + x_source
+            elif i == 1:
+                x_source = self.source_conv(har_source)
+                x = x + x_source
             xs = None
             for j in range(self.num_kernels):
                 if xs is None:
@@ -259,11 +287,11 @@ class Generator(torch.nn.Module):
         x = F.leaky_relu(x)
         x = self.conv_post(x)
         x = torch.tanh(x)
-
         return x
 
     def remove_weight_norm(self):
-        rank_zero_info('Removing weight norm...')
+        # rank_zero_info('Removing weight norm...')
+        print('Removing weight norm...')
         for l in self.ups:
             remove_weight_norm(l)
         for l in self.resblocks:
