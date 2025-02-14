@@ -221,7 +221,7 @@ class EncSALayer(nn.Module):
         self.layer_norm1 = LayerNorm(c)
         if rotary_embed is None:
             self.self_attn = MultiheadAttention(
-                c, num_heads, dropout=attention_dropout, bias=False, batch_first=True
+                c, num_heads, dropout=attention_dropout, bias=False, batch_first=False
             )
             self.use_rope = False
         else:
@@ -244,12 +244,14 @@ class EncSALayer(nn.Module):
         if self.use_rope:
             x = self.self_attn(x, key_padding_mask=encoder_padding_mask)
         else:
+            x = x.transpose(0, 1)
             x, _, = self.self_attn(
                 query=x,
                 key=x,
                 value=x,
                 key_padding_mask=encoder_padding_mask
             )
+            x = x.transpose(0, 1)
         x = F.dropout(x, self.dropout, training=self.training)
         x = residual + x
         x = x * (1 - encoder_padding_mask.float())[..., None]
