@@ -142,6 +142,8 @@ class PhonemeDictionary:
         return phone in self._cross_lingual_phonemes
 
     def encode_one(self, phone, lang=None):
+        if '/' in phone:
+            lang, phone = phone.split('/', maxsplit=1)
         if lang is None or not self._multi_langs or phone in self._phone_to_id:
             return self._phone_to_id[phone]
         if '/' not in phone:
