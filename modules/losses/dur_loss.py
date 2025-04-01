@@ -54,3 +54,43 @@ class DurationLoss(nn.Module):
         dur_loss = pdur_loss + wdur_loss + sdur_loss
 
         return dur_loss
+
+
+class DurGanLoss(nn.Module):
+    def __init__(self, loss_mode='D_loss'):
+        super().__init__()
+        self.loss_mode = loss_mode
+
+    def discriminator_loss(self, disc_real_outputs, disc_generated_outputs):
+        r_loss = 0
+        g_loss = 0
+        batch = 0
+        for dr, dg in zip(disc_real_outputs, disc_generated_outputs):
+            dr = dr.float()
+            dg = dg.float()
+            r_loss = torch.mean((1 - dr) ** 2)
+            g_loss = torch.mean(dg**2)
+            r_loss += r_loss
+            g_loss += g_loss
+            batch += 1
+
+        return r_loss / batch, g_loss / batch
+
+    def generator_loss(self, disc_outputs):
+        loss = 0
+        batch = 0
+        for dg in disc_outputs:
+            dg = dg.float()
+            l = torch.mean((1 - dg) ** 2)
+            loss += l
+            batch += 1
+
+        return loss / batch
+
+    def forward(self, disc_outputs, disc_generated_outputs):
+        if self.loss_mode == 'D_loss':
+            r_loss, g_loss = self.discriminator_loss(disc_outputs, disc_generated_outputs)
+            return r_loss, g_loss
+        elif self.loss_mode == 'G_loss':
+            loss = self.generator_loss(disc_generated_outputs)
+            return loss

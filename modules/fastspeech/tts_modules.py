@@ -11,6 +11,95 @@ DEFAULT_MAX_SOURCE_POSITIONS = 2000
 DEFAULT_MAX_TARGET_POSITIONS = 2000
 
 
+class CLayerNorm(nn.Module):
+    def __init__(self, channels, eps=1e-5):
+        super().__init__()
+        self.channels = channels
+        self.eps = eps
+
+        self.gamma = nn.Parameter(torch.ones(channels))
+        self.beta = nn.Parameter(torch.zeros(channels))
+
+    def forward(self, x):
+        x = x.transpose(1, -1)
+        x = F.layer_norm(x, (self.channels,), self.gamma, self.beta, self.eps)
+        return x.transpose(1, -1)
+
+
+class DurationDiscriminator(nn.Module):  # vits2
+    def __init__(
+        self, offset=1.0, in_channels=256, filter_channels=192, kernel_size=3, p_dropout=0.1, gin_channels=0
+    ):
+        super().__init__()
+        self.offset = offset
+        self.in_channels = in_channels
+        self.filter_channels = filter_channels
+        self.kernel_size = kernel_size
+        self.p_dropout = p_dropout
+        self.gin_channels = gin_channels
+
+        self.drop = nn.Dropout(p_dropout)
+        self.conv_1 = nn.Conv1d(
+            in_channels, filter_channels, kernel_size, padding=kernel_size // 2
+        )
+        self.norm_1 = CLayerNorm(filter_channels)
+        self.conv_2 = nn.Conv1d(
+            filter_channels, filter_channels, kernel_size, padding=kernel_size // 2
+        )
+        self.norm_2 = CLayerNorm(filter_channels)
+        self.dur_proj = nn.Conv1d(1, filter_channels, 1)
+
+        self.LSTM = nn.LSTM(
+            2 * filter_channels, filter_channels, batch_first=True, bidirectional=True
+        )
+
+        if gin_channels != 0:
+            self.cond = nn.Conv1d(gin_channels, in_channels, 1)
+
+        self.output_layer = nn.Sequential(
+            nn.Linear(2 * filter_channels, 1), nn.Sigmoid()
+        )
+
+    def linear2log(self, any_dur):
+        return torch.log(any_dur + self.offset)
+
+    def forward_probability(self, x, dur):
+        dur = self.dur_proj(self.linear2log(dur).unsqueeze(1))
+        x = torch.cat([x, dur], dim=1)
+        x = x.transpose(1, 2)
+        x, _ = self.LSTM(x)
+        output_prob = self.output_layer(x)
+        return output_prob
+
+    def forward(self, x, x_mask, dur_r, dur_hat, g=None):
+        # x : [B, T, idim]
+        # x_mask : [B, T]
+        # dur_r : [B, T]
+        # dur_hat : [B, T]
+        # g : N/A
+        x_mask = 1 - x_mask.float()
+        x_mask = x_mask[:, None, :]
+        x = torch.detach(x).transpose(1, -1) # (B, idim, T)
+        if g is not None:
+            g = torch.detach(g)
+            x = x + self.cond(g)
+        x = self.conv_1(x * x_mask)
+        x = torch.relu(x)
+        x = self.norm_1(x)
+        x = self.drop(x)
+        x = self.conv_2(x * x_mask)
+        x = torch.relu(x)
+        x = self.norm_2(x)
+        x = self.drop(x)
+
+        output_probs = []
+        for dur in [dur_r, dur_hat]:
+            output_prob = self.forward_probability(x, dur)
+            output_probs.append(output_prob)
+
+        return output_probs
+
+
 class TransformerEncoderLayer(nn.Module):
     def __init__(self, hidden_size, dropout, kernel_size=None, act='gelu', num_heads=2, rotary_embed=None):
         super().__init__()
@@ -62,7 +151,7 @@ class DurationPredictor(torch.nn.Module):
     """
 
     def __init__(self, in_dims, n_layers=2, n_chans=384, kernel_size=3,
-                 dropout_rate=0.1, offset=1.0, dur_loss_type='mse'):
+                 dropout_rate=0.1, offset=1.0, dur_loss_type='mse', use_gan=False):
         """Initialize duration predictor module.
         Args:
             in_dims (int): Input dimension.
@@ -73,6 +162,7 @@ class DurationPredictor(torch.nn.Module):
             offset (float, optional): Offset value to avoid nan in log domain.
         """
         super(DurationPredictor, self).__init__()
+        self.use_gan = use_gan
         self.offset = offset
         self.conv = torch.nn.ModuleList()
         self.kernel_size = kernel_size
@@ -118,6 +208,9 @@ class DurationPredictor(torch.nn.Module):
         Returns:
             (train) FloatTensor, (infer) LongTensor: Batch of predicted durations in linear domain (B, Tmax).
         """
+        if self.use_gan:
+            xs = torch.detach(xs)
+            hidden_x = xs
         xs = xs.transpose(1, -1)  # (B, idim, Tmax)
         masks = 1 - x_masks.float()
         masks_ = masks[:, None, :]
@@ -131,7 +224,14 @@ class DurationPredictor(torch.nn.Module):
         dur_pred = self.out2dur(xs)
         if infer:
             dur_pred = dur_pred.clamp(min=0.)  # avoid negative value
-        return dur_pred
+        if self.use_gan and not infer:
+             return {
+                 'dur_pred': dur_pred,
+                 'x_mask': x_masks,
+                 'hidden_x': hidden_x
+             }
+        else:
+            return dur_pred
 
 
 class VariancePredictor(torch.nn.Module):
