@@ -43,11 +43,6 @@ class TPSE(torch.nn.Module):
             torch.nn.Linear(self.output_size, self.output_size),
             torch.nn.Tanh()
         )
-        for name, param in self.gru.named_parameters(): # 初始化操作
-            if 'weight' in name:
-                torch.nn.init.xavier_uniform_(param)
-            elif 'bias' in name:
-                torch.nn.init.zeros_(param)
 
     def forward(self, text_features): # cond输入前记得detech
         """
@@ -203,11 +198,6 @@ class ReferenceEncoder(torch.nn.Module):
             ) // conv_stride + 1
         gru_in_units *= conv_out_chans
         self.gru = torch.nn.GRU(gru_in_units, gru_units, gru_layers, batch_first=True)
-        for name, param in self.gru.named_parameters(): # 初始化操作
-            if 'weight' in name:
-                torch.nn.init.xavier_uniform_(param)
-            elif 'bias' in name:
-                torch.nn.init.zeros_(param)
 
     def forward(self, speech: torch.Tensor) -> torch.Tensor:
         """Calculate forward propagation.
