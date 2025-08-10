@@ -40,7 +40,7 @@ class RectifiedFlow(nn.Module):
 
         return v_pred, x_end - x_start
 
-    def forward(self, condition, gt_spec=None, src_spec=None, infer=True, input_mel=None, inpaint_mask=None, inpaint_weight=None, base=None, expr=1.0, temperature=1.0):
+    def forward(self, condition, gt_spec=None, src_spec=None, infer=True, input_spec=None, inpaint_mask=None, base=None, expr=1.0, temperature=1.0):
         cond = condition.transpose(1, 2)
         b, device = condition.shape[0], condition.device
 
@@ -60,7 +60,7 @@ class RectifiedFlow(nn.Module):
                     spec = spec[:, None, :, :]
             else:
                 spec = None
-            x = self.inference(cond, b=b, x_end=spec, device=device, input_mel=input_mel, inpaint_mask=inpaint_mask, inpaint_weight=inpaint_weight, base=base, expr=expr, temperature=temperature)
+            x = self.inference(cond, b=b, x_end=spec, device=device, input_spec=input_spec, inpaint_mask=inpaint_mask, base=base, expr=expr, temperature=temperature)
             return self.denorm_spec(x)
 
     @torch.no_grad()
@@ -111,26 +111,23 @@ class RectifiedFlow(nn.Module):
         return x, t
 
     @torch.no_grad()
-    def inference(self, cond, b=1, x_end=None, device=None, input_mel=None, inpaint_mask=None, inpaint_weight=None, base=None, expr=1.0, temperature=1.0):
+    def inference(self, cond, b=1, x_end=None, device=None, input_spec=None, inpaint_mask=None, base=None, expr=None, temperature=1.0):
         # 在这里进行inpainting机制开启的判断和输入的处理
-        # input_mel与inference结果对齐（[B, T, M] or [B, F, T, M]），调整到与noise对齐（[B, F, M, T]）
+        # input_spec与inference结果对齐（[B, T, M] or [B, F, T, M]），调整到与noise对齐（[B, F, M, T]）
         # inpaint_mask是一个一维布尔值（[B, T]），**与retake对齐，True为mask部分**，调整到与时间维度对齐（[B, 1, 1, T]）
-        # inpaint_weight在这里定义为一个帧级数值（[B，F, T] or [B, T]），调整到与时间维度对齐（[B, F, 1, T]），取值范围为0~1
-        is_inpaint = inpaint_mask is not None and input_mel is not None and inpaint_weight is not None
+        is_inpaint = inpaint_mask is not None and input_spec is not None is not None
         
         if is_inpaint:
             inpaint_mask = inpaint_mask.float().to(device).unsqueeze(-2) # [B, F, 1, T] or [B, 1, T]
-            inpaint_weight = inpaint_weight.float().to(device).unsqueeze(-2) # [B, F, 1, T] or [B, 1, T]
-            input_mel = self.norm_spec(input_mel).transpose(-2, -1) # [B, F, M, T] or [B, M, T]
+            input_spec = self.norm_spec(input_spec).transpose(-2, -1) # [B, F, M, T] or [B, M, T]
             if self.num_feats == 1:
                 inpaint_mask = inpaint_mask[:, None, :, :] # [B, 1, 1, T]
-                inpaint_weight = inpaint_weight[:, None, :, :] # [B, 1, 1, T]
-                input_mel = input_mel[:, None, :, :] # [B, 1, M, T]
+                input_spec = input_spec[:, None, :, :] # [B, 1, M, T]
 
         # TFG (Training-Free Guidance)
         # TFG考虑的是“音高表现力”相关的实现
         # base:[B, T]
-        is_guidance = base is not None and expr < 1.0
+        is_guidance = base is not None
         
         if is_guidance:
             base = self.norm_spec(base).transpose(-2, -1).unsqueeze(-2)
@@ -143,24 +140,23 @@ class RectifiedFlow(nn.Module):
         t_start = hparams.get('T_start_infer', self.t_start)
         if self.use_shallow_diffusion and t_start > 0:
             assert x_end is not None, 'Missing shallow diffusion source.'
-            # shallow diffusion的情况下，在这里构造x_end，把input_mel和前级的输出进行拼接
-            # 也就是说对于保留部分，渲染的起点也是input_mel
-            # 起点不考虑inpaint_weight
+            # shallow diffusion的情况下，在这里构造x_end，把input_spec和前级的输出进行拼接
+            # 也就是说对于保留部分，渲染的起点也是input_spec
             if is_inpaint:
-                x_end = x_end * inpaint_mask + input_mel * (1 - inpaint_mask)
+                x_end = x_end * inpaint_mask + input_spec * (1 - inpaint_mask)
             if t_start >= 1.:
                 t_start = 1.
                 x = x_end
             else:
                 x = t_start * x_end + (1 - t_start) * noise
         else:
-            # 考虑直接对input_mel进行shallow diffusion的情况, 也就是说对于全扩散模型也要考虑渲染深度问题
+            # 考虑直接对input_spec进行shallow diffusion的情况, 也就是说对于全扩散模型也要考虑渲染深度问题
             if is_inpaint:
                 if t_start >= 1.:
                     t_start = 1.
-                    x = input_mel
+                    x = input_spec
                 else:
-                    x = t_start * input_mel + (1 - t_start) * noise
+                    x = t_start * input_spec + (1 - t_start) * noise
             else:
                 t_start = 0.
                 x = noise
@@ -184,10 +180,8 @@ class RectifiedFlow(nn.Module):
                 ti = t_start + i * dts
                 x, _ = algorithm_fn(x, ti, dt, cond, noise, base, expr, is_guidance)
                 # **关键**，这里每一步要把去噪的结果修正到保留部分+对应噪声的结果
-                # 根据inpaint_weight修正到要保留的程度
                 if is_inpaint:
-                    weight = (1 - inpaint_mask) * inpaint_weight
-                    x = x * (1 - weight) + (input_mel * ti + noise * (1 - ti)) * weight
+                    x = x * (1 - inpaint_mask) + (input_spec * ti + noise * (1 - ti)) * inpaint_mask
             x = x.float()
         x = x.transpose(2, 3).squeeze(1)  # [B, F, M, T] => [B, T, M] or [B, F, T, M]
         return x
