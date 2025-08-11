@@ -91,7 +91,7 @@ class RectifiedFlow(nn.Module):
         k_1 = self._get_velocity(x, self.time_scale_factor * t, cond, noise, base, expr, is_guidance)
         k_2 = self._get_velocity(x + 0.5 * k_1 * dt, self.time_scale_factor * (t + 0.5 * dt), cond, noise, base, expr, is_guidance)
         k_3 = self._get_velocity(x + 0.5 * k_2 * dt, self.time_scale_factor * (t + 0.5 * dt), cond, noise, base, expr, is_guidance)
-        k_4 = self._get_velocity(x + k_3 * dt, self.time_scale_factor * (t + dt), cond)
+        k_4 = self._get_velocity(x + k_3 * dt, self.time_scale_factor * (t + dt), cond, noise, base, expr, is_guidance)
         x += (k_1 + 2 * k_2 + 2 * k_3 + k_4) * dt / 6
         t += dt
         return x, t
@@ -105,7 +105,7 @@ class RectifiedFlow(nn.Module):
         k_5 = self._get_velocity(x + 0.0625 * (3 * k_1 + 9 * k_4) * dt, self.time_scale_factor * (t + 0.75 * dt), cond, noise, base, expr, is_guidance)
         k_6 = self._get_velocity(x + (-3 * k_1 + 2 * k_2 + 12 * k_3 - 12 * k_4 + 8 * k_5) * dt / 7,
                                self.time_scale_factor * (t + dt),
-                               cond)
+                               cond, noise, base, expr, is_guidance)
         x += (7 * k_1 + 32 * k_3 + 12 * k_4 + 32 * k_5 + 7 * k_6) * dt / 90
         t += dt
         return x, t
@@ -182,7 +182,7 @@ class RectifiedFlow(nn.Module):
                 # **关键**，这里每一步要把去噪的结果修正到保留部分+对应噪声的结果
                 if i < int(infer_step * inpaint_strength):
                     if is_inpaint:
-                        x = x * (1 - inpaint_mask) + (input_spec * ti + noise * (1 - ti)) * inpaint_mask
+                        x = x * inpaint_mask + (input_spec * ti + noise * (1 - ti)) * (1 - inpaint_mask)
             x = x.float()
         x = x.transpose(2, 3).squeeze(1)  # [B, F, M, T] => [B, T, M] or [B, F, T, M]
         return x
