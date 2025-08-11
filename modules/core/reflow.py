@@ -111,7 +111,7 @@ class RectifiedFlow(nn.Module):
         return x, t
 
     @torch.no_grad()
-    def inference(self, cond, b=1, x_end=None, device=None, input_spec=None, inpaint_mask=None, base=None, expr=None, temperature=1.0):
+    def inference(self, cond, b=1, x_end=None, device=None, input_spec=None, inpaint_mask=None, inpaint_strength=1.0, base=None, expr=None, temperature=1.0):
         # 在这里进行inpainting机制开启的判断和输入的处理
         # input_spec与inference结果对齐（[B, T, M] or [B, F, T, M]），调整到与noise对齐（[B, F, M, T]）
         # inpaint_mask是一个一维布尔值（[B, T]），**与retake对齐，True为mask部分**，调整到与时间维度对齐（[B, 1, 1, T]）
@@ -180,8 +180,9 @@ class RectifiedFlow(nn.Module):
                 ti = t_start + i * dts
                 x, _ = algorithm_fn(x, ti, dt, cond, noise, base, expr, is_guidance)
                 # **关键**，这里每一步要把去噪的结果修正到保留部分+对应噪声的结果
-                if is_inpaint:
-                    x = x * (1 - inpaint_mask) + (input_spec * ti + noise * (1 - ti)) * inpaint_mask
+                if i < int(infer_step * inpaint_strength):
+                    if is_inpaint:
+                        x = x * (1 - inpaint_mask) + (input_spec * ti + noise * (1 - ti)) * inpaint_mask
             x = x.float()
         x = x.transpose(2, 3).squeeze(1)  # [B, F, M, T] => [B, T, M] or [B, F, T, M]
         return x
