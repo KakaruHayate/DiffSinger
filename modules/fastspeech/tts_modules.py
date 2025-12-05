@@ -13,7 +13,8 @@ DEFAULT_MAX_TARGET_POSITIONS = 2000
 
 
 class TransformerEncoderLayer(nn.Module):
-    def __init__(self, hidden_size, dropout, kernel_size=None, act='gelu', num_heads=2, rotary_embed=None, layer_idx=None, use_mixln=False):
+    def __init__(self, hidden_size, dropout, kernel_size=None, act='gelu', num_heads=2, rotary_embed=None, layer_idx=None, use_mixln=False, 
+        use_gate_attn=False, use_qk_norm=False):
         super().__init__()
         if use_mixln==False:
             layer_idx=None
@@ -21,7 +22,8 @@ class TransformerEncoderLayer(nn.Module):
             hidden_size, num_heads, dropout=dropout,
             attention_dropout=0.0, relu_dropout=dropout,
             kernel_size=kernel_size,
-            act=act, rotary_embed=rotary_embed, layer_idx=layer_idx
+            act=act, rotary_embed=rotary_embed, layer_idx=layer_idx, 
+            use_gate_attn=use_gate_attn, use_qk_norm=use_qk_norm
         )
 
     def forward(self, x, **kwargs):
@@ -400,21 +402,23 @@ def mel2ph_to_dur(mel2ph, T_txt, max_dur=None):
 class FastSpeech2Encoder(nn.Module):
     def __init__(self, hidden_size, num_layers,
                  ffn_kernel_size=9, ffn_act='gelu',
-                 dropout=None, num_heads=2, use_pos_embed=True, rel_pos=True, use_rope=False, use_mixln=False):
+                 dropout=None, num_heads=2, use_pos_embed=True, rel_pos=True, use_rope=False, use_mixln=False, rope_interleaved=True,
+                 use_gate_attn=False, use_qk_norm=False):
         super().__init__()
         self.num_layers = num_layers
         embed_dim = self.hidden_size = hidden_size
         self.dropout = dropout
         self.use_pos_embed = use_pos_embed
         if use_pos_embed and use_rope:
-            rotary_embed = RotaryEmbedding(dim = embed_dim // num_heads)
+            rotary_embed = RotaryEmbedding(dim = embed_dim // num_heads, interleaved = rope_interleaved)
         else:
             rotary_embed = None
         self.layers = nn.ModuleList([
             TransformerEncoderLayer(
                 self.hidden_size, self.dropout,
                 kernel_size=ffn_kernel_size, act=ffn_act,
-                num_heads=num_heads, rotary_embed=rotary_embed, layer_idx=i, use_mixln=use_mixln
+                num_heads=num_heads, rotary_embed=rotary_embed, layer_idx=i, use_mixln=use_mixln,
+                use_gate_attn=use_gate_attn, use_qk_norm=use_gate_attn
             )
             for i in range(self.num_layers)
         ])
