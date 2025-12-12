@@ -211,8 +211,12 @@ class TransformerFFNLayer(nn.Module):
         return x
 
 
+import matplotlib.pyplot as plt
+import os
+import datetime
+
 class MultiheadSelfAttentionWithRoPE(nn.Module):
-    def __init__(self, embed_dim, num_heads, dropout=0.1, bias=False, rotary_embed=None, use_gate_attn=False, use_qk_norm=False):
+    def __init__(self, embed_dim, num_heads, dropout=0.1, bias=False, rotary_embed=None, use_gate_attn=True, use_qk_norm=True, layer_idx=None):
         super().__init__()
         assert embed_dim % num_heads == 0, "Embedding dimension must be divisible by number of heads"
         
@@ -223,12 +227,6 @@ class MultiheadSelfAttentionWithRoPE(nn.Module):
         # Linear layers for Q, K, V projections
         self.in_proj = nn.Linear(embed_dim, embed_dim * 3, bias=bias)
         
-        # refer to Qwen 3
-        self.use_qk_norm = use_qk_norm
-        if self.use_qk_norm:
-            self.q_norm = LayerNorm(embed_dim // num_heads)
-            self.k_norm = LayerNorm(embed_dim // num_heads)
-        
         # Final linear layer after concatenation
         self.out_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
         
@@ -237,23 +235,40 @@ class MultiheadSelfAttentionWithRoPE(nn.Module):
         
         # Rotary Embeddings
         self.rotary_embed = rotary_embed
-        
-        # refer to NIPS 2025 best paper: "Gated Attention for Large Language Models: Non-linearity, Sparsity, and Attention-Sink-Free"
-        # (arxiv: 2505.06708)
+
         self.use_gate_attn = use_gate_attn
         if self.use_gate_attn:
+            # 根据论文结论，最佳配置是 "SDPA Elementwise G1"
+            # 这是一个输入依赖的门控：Gate = Sigmoid(X * W_gate)
+            # 这里的维度是 embed_dim，实现了 "Head-Specific Elementwise" 的效果
             self.gate_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
+            # self.atan_sigmoid = AtanSigmoid()
+            
+            # 初始化门控投影层
             nn.init.xavier_uniform_(self.gate_proj.weight)
             if bias:
                 nn.init.constant_(self.gate_proj.bias, 0.0)
-        
+
+        self.use_qk_norm = use_qk_norm
+        if self.use_qk_norm:
+            self.q_norm = LayerNorm(embed_dim // num_heads)
+            self.k_norm = LayerNorm(embed_dim // num_heads)
+
         # Initialization parameters
         nn.init.xavier_uniform_(self.in_proj.weight)
         nn.init.xavier_uniform_(self.out_proj.weight)
         if bias:
             nn.init.constant_(self.in_proj.bias, 0.0)
             nn.init.constant_(self.out_proj.bias, 0.0)
-        
+
+        debug_viz_path = "./attn_viz_l6"
+        self.debug_viz_path = debug_viz_path
+        self.layer_idx = layer_idx if layer_idx is not None else "X" # 标记层号
+        self.viz_step_count = 0
+
+        if debug_viz_path:
+            os.makedirs(debug_viz_path, exist_ok=True)
+
     def forward(self, x, key_padding_mask=None):
         # x: (B, L, C)
         # key_padding_mask: (B, L)
@@ -262,15 +277,14 @@ class MultiheadSelfAttentionWithRoPE(nn.Module):
         # Project inputs to Q, K, V
         Q, K, V = torch.split(self.in_proj(x), self.embed_dim, dim=-1)
         
-        # Query-Key Normalization
-        if self.use_qk_norm:
-            Q = self.q_norm(Q)
-            K = self.k_norm(K)
-        
         # Reshape Q, K, V for multi-head attention
         Q = Q.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)  # (B, H, L, D)
         K = K.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)  # (B, H, L, D)
         V = V.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)  # (B, H, L, D)
+        
+        if self.use_qk_norm:
+            Q = self.q_norm(Q)
+            K = self.k_norm(K)
         
         # Apply RoPE
         if self.rotary_embed is not None:
@@ -296,15 +310,138 @@ class MultiheadSelfAttentionWithRoPE(nn.Module):
         # Reshape and concatenate heads
         attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, seq_len, embed_dim)  # (B, L, C)
         
-        if self.use_gate:
-            # Formula (5): Y' = Y ⊙ σ(XW_θ)
+        gate_score = None
+        if self.use_gate_attn:
+            # 论文公式 (5): Y' = Y ⊙ σ(XW_θ)
+            # x 是当前层的输入 (Input-Dependent)
+            # attn_output 是 SDPA 的输出 (Y)
+            # gate_score 是 σ(XW_θ)
+            
+            # gate_score = self.atan_sigmoid(self.gate_proj(x)) # (B, L, C)
             gate_score = torch.sigmoid(self.gate_proj(x)) # (B, L, C)
             attn_output = attn_output * gate_score
-        
+
+        visualize = False
+        # visualize = True
+        token_seq = "SP zh/w zh/uo zh/k zh/en zh/s zh/i0 zh/w zh/u zh/j zh/i zh/d zh/an zh/y zh/iong zh/l zh/i zh/p zh/an zh/t zh/an zh/b zh/u zh/p zh/a zh/sh zh/ir zh/c zh/uo zh/f zh/an zh/zh zh/eng zh/y zh/iu zh/h zh/ui zh/x zh/van zh/k zh/e zh/x zh/i zh/r zh/en zh/sh zh/eng zh/n zh/a zh/l zh/i zh/x zh/vn zh/g zh/e zh/d zh/u zh/d zh/ang zh/ch zh/ong zh/l zh/ai zh/j zh/ian zh/x zh/in zh/y zh/iu zh/y0 zh/v zh/er zh/y zh/ian zh/b zh/u zh/y zh/iu zh/zh zh/ong zh/m zh/ei zh/t zh/uo zh/k zh/ou zh/x zh/ian zh/b zh/ei zh/x zh/in zh/t zh/iao zh/j zh/i zh/s zh/an zh/d zh/uo zh/c zh/ong zh/r zh/ong zh/y zh/iu zh/x zh/i zh/x zh/v zh/d zh/uo zh/x zh/van zh/d zh/uan zh/a SP"
+        if visualize:
+            self._visualize(attn_weights, gate_score, seq_len, embed_dim, token_seq)
+
         # Final linear projection
         output = self.out_proj(attn_output)  # (B, L, C)
         
         return output
+        
+
+    def _visualize(self, attn_weights, gate_score, seq_len, embed_dim, token_seq):
+        with torch.no_grad():
+            self.viz_step_count += 1
+            time_str = datetime.datetime.now().strftime("%H%M%S_%f")
+            fig_name = f"step_{self.viz_step_count:04d}_L{self.layer_idx}_{time_str}"
+            
+            # --- 1. 处理 Token 标签 ---
+            labels = None
+            if token_seq is not None:
+                if isinstance(token_seq, str):
+                    raw_tokens = token_seq.strip().split()
+                elif isinstance(token_seq, (list, tuple)):
+                    raw_tokens = [str(t) for t in token_seq]
+                else:
+                    raw_tokens = []
+                
+                # 清洗前缀: "zh/w" -> "w", "en/k" -> "k", "SP" -> "SP"
+                labels = [t.split('/')[-1] for t in raw_tokens]
+                
+                # 防御性截断或填充（防止输入长度与 Tensor 长度不一致报错）
+                if len(labels) > seq_len:
+                    labels = labels[:seq_len]
+                elif len(labels) < seq_len:
+                    labels = labels + [""] * (seq_len - len(labels))
+            
+            # 如果没有提供 token_seq，使用数字索引
+            if labels is None:
+                labels = [str(i) for i in range(seq_len)]
+
+            # --- 2. 准备数据 ---
+            attn_map_avg = attn_weights[0].mean(dim=0).cpu().numpy()
+            diag_vals = np.diag(attn_map_avg)
+            sink_vals = attn_map_avg[:, 0]
+            max_vals = attn_map_avg.max(axis=1)
+            
+            if self.use_gate:
+                gate_vis = gate_score[0].cpu().numpy()
+                gate_avg_per_token = gate_vis.mean(axis=-1)
+            
+            # --- 3. 绘图设置 (放大尺寸) ---
+            # 每个子图宽 8，高 8（保证正方形 Map 足够大且清晰）
+            num_plots = 4 if self.use_gate else 2
+            fig, ax = plt.subplots(1, num_plots, figsize=(8 * num_plots, 8))
+            if num_plots == 1: ax = [ax]
+            
+            # 字体大小设置 (根据序列长度动态调整，防止太挤)
+            tick_font_size = 10 if seq_len < 50 else 6
+            
+            # === 子图 1: Attention Map ===
+            im0 = ax[0].imshow(attn_map_avg, aspect='equal', cmap='viridis', interpolation='nearest', vmin=0, vmax=1)
+            ax[0].set_title(f"L{self.layer_idx} Attn Map", fontsize=14)
+            # 设置坐标轴
+            ax[0].set_xticks(np.arange(len(labels)))
+            ax[0].set_yticks(np.arange(len(labels)))
+            ax[0].set_xticklabels(labels, rotation=90, fontsize=tick_font_size)
+            ax[0].set_yticklabels(labels, fontsize=tick_font_size)
+            ax[0].set_xlabel("Key (Source)", fontsize=12)
+            ax[0].set_ylabel("Query (Target)", fontsize=12)
+            plt.colorbar(im0, ax=ax[0], fraction=0.046, pad=0.04)
+            
+            # === 子图 2: Attention Values Stats ===
+            x_axis = np.arange(seq_len)
+            ax[1].plot(x_axis, max_vals, label="Max (Focus)", color='blue', alpha=0.7)
+            ax[1].plot(x_axis, diag_vals, label="Self (Diag)", color='green', linestyle='--', alpha=0.7)
+            ax[1].plot(x_axis, sink_vals, label="Sink (Idx0)", color='red', linestyle=':', alpha=0.7)
+            
+            ax[1].set_title(f"L{self.layer_idx} Weights Stats", fontsize=14)
+            ax[1].set_xticks(np.arange(len(labels)))
+            ax[1].set_xticklabels(labels, rotation=90, fontsize=tick_font_size)
+            ax[1].set_ylim(-0.05, 1.05)
+            ax[1].grid(True, alpha=0.3)
+            ax[1].legend(loc='upper right')
+            
+            # === Gate 相关子图 ===
+            if self.use_gate:
+                # 子图 3: Gate Heatmap
+                vis_dim = min(embed_dim, 128)
+                im2 = ax[2].imshow(gate_vis[:, :vis_dim].T, aspect='auto', cmap='magma', vmin=0, vmax=1)
+                ax[2].set_title(f"L{self.layer_idx} Gate Values (Top {vis_dim} Dims)", fontsize=14)
+                # X轴是 Token
+                ax[2].set_xticks(np.arange(len(labels)))
+                ax[2].set_xticklabels(labels, rotation=90, fontsize=tick_font_size)
+                ax[2].set_ylabel("Hidden Dim", fontsize=12)
+                plt.colorbar(im2, ax=ax[2], fraction=0.046, pad=0.04)
+                
+                # 子图 4: Gate Avg Curve
+                ax[3].plot(gate_avg_per_token, label="Avg Gate", color='orange', linewidth=2)
+                ax[3].set_title(f"L{self.layer_idx} Avg Gate per Token", fontsize=14)
+                ax[3].set_xticks(np.arange(len(labels)))
+                ax[3].set_xticklabels(labels, rotation=90, fontsize=tick_font_size)
+                ax[3].set_ylim(0, 1.1)
+                ax[3].grid(True, alpha=0.3)
+                
+                # 标出均值线
+                avg_val = gate_avg_per_token.mean()
+                ax[3].axhline(y=avg_val, color='grey', linestyle='--', label=f"Mean: {avg_val:.2f}")
+                
+                # 标出被抑制得最厉害的 Token (Gate 最小的)
+                min_idx = np.argmin(gate_avg_per_token)
+                ax[3].scatter([min_idx], [gate_avg_per_token[min_idx]], color='red', zorder=5)
+                ax[3].text(min_idx, gate_avg_per_token[min_idx]+0.02, labels[min_idx], color='red', fontsize=10, ha='center')
+                
+                ax[3].legend()
+
+            plt.tight_layout()
+            save_path = os.path.join(self.debug_viz_path, f"{fig_name}.png")
+            plt.savefig(save_path)
+            plt.close()
+            print(f"[Viz] Saved L{self.layer_idx} with tokens to {save_path}")
         
 
 def Conv_Init(
