@@ -216,7 +216,7 @@ import os
 import datetime
 
 class MultiheadSelfAttentionWithRoPE(nn.Module):
-    def __init__(self, embed_dim, num_heads, dropout=0.1, bias=False, rotary_embed=None, use_gate_attn=True, use_qk_norm=True, layer_idx=None):
+    def __init__(self, embed_dim, num_heads, dropout=0.1, bias=False, rotary_embed=None, use_gate_attn=False, use_qk_norm=False, layer_idx=None):
         super().__init__()
         assert embed_dim % num_heads == 0, "Embedding dimension must be divisible by number of heads"
         
@@ -321,11 +321,11 @@ class MultiheadSelfAttentionWithRoPE(nn.Module):
             gate_score = torch.sigmoid(self.gate_proj(x)) # (B, L, C)
             attn_output = attn_output * gate_score
 
-        visualize = False
-        # visualize = True
-        token_seq = "SP zh/w zh/uo zh/k zh/en zh/s zh/i0 zh/w zh/u zh/j zh/i zh/d zh/an zh/y zh/iong zh/l zh/i zh/p zh/an zh/t zh/an zh/b zh/u zh/p zh/a zh/sh zh/ir zh/c zh/uo zh/f zh/an zh/zh zh/eng zh/y zh/iu zh/h zh/ui zh/x zh/van zh/k zh/e zh/x zh/i zh/r zh/en zh/sh zh/eng zh/n zh/a zh/l zh/i zh/x zh/vn zh/g zh/e zh/d zh/u zh/d zh/ang zh/ch zh/ong zh/l zh/ai zh/j zh/ian zh/x zh/in zh/y zh/iu zh/y0 zh/v zh/er zh/y zh/ian zh/b zh/u zh/y zh/iu zh/zh zh/ong zh/m zh/ei zh/t zh/uo zh/k zh/ou zh/x zh/ian zh/b zh/ei zh/x zh/in zh/t zh/iao zh/j zh/i zh/s zh/an zh/d zh/uo zh/c zh/ong zh/r zh/ong zh/y zh/iu zh/x zh/i zh/x zh/v zh/d zh/uo zh/x zh/van zh/d zh/uan zh/a SP"
-        if visualize:
-            self._visualize(attn_weights, gate_score, seq_len, embed_dim, token_seq)
+        # visualize = False
+        # # visualize = True
+        # token_seq = "SP zh/w zh/uo zh/k zh/en zh/s zh/i0 zh/w zh/u zh/j zh/i zh/d zh/an zh/y zh/iong zh/l zh/i zh/p zh/an zh/t zh/an zh/b zh/u zh/p zh/a zh/sh zh/ir zh/c zh/uo zh/f zh/an zh/zh zh/eng zh/y zh/iu zh/h zh/ui zh/x zh/van zh/k zh/e zh/x zh/i zh/r zh/en zh/sh zh/eng zh/n zh/a zh/l zh/i zh/x zh/vn zh/g zh/e zh/d zh/u zh/d zh/ang zh/ch zh/ong zh/l zh/ai zh/j zh/ian zh/x zh/in zh/y zh/iu zh/y0 zh/v zh/er zh/y zh/ian zh/b zh/u zh/y zh/iu zh/zh zh/ong zh/m zh/ei zh/t zh/uo zh/k zh/ou zh/x zh/ian zh/b zh/ei zh/x zh/in zh/t zh/iao zh/j zh/i zh/s zh/an zh/d zh/uo zh/c zh/ong zh/r zh/ong zh/y zh/iu zh/x zh/i zh/x zh/v zh/d zh/uo zh/x zh/van zh/d zh/uan zh/a SP"
+        # if visualize:
+        #     self._visualize(attn_weights, gate_score, seq_len, embed_dim, token_seq)
 
         # Final linear projection
         output = self.out_proj(attn_output)  # (B, L, C)
