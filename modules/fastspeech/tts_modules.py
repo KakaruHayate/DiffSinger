@@ -13,13 +13,14 @@ DEFAULT_MAX_TARGET_POSITIONS = 2000
 
 
 class TransformerEncoderLayer(nn.Module):
-    def __init__(self, hidden_size, dropout, kernel_size=None, act='gelu', num_heads=2, rotary_embed=None):
+    def __init__(self, hidden_size, dropout, kernel_size=None, act='gelu', num_heads=2, rotary_embed=None, layer_idx=None, mix_ln_layer=None):
         super().__init__()
         self.op = EncSALayer(
             hidden_size, num_heads, dropout=dropout,
             attention_dropout=0.0, relu_dropout=dropout,
             kernel_size=kernel_size,
-            act=act, rotary_embed=rotary_embed
+            act=act, rotary_embed=rotary_embed,
+            layer_idx=layer_idx, mix_ln_layer=mix_ln_layer
         )
 
     def forward(self, x, **kwargs):
@@ -67,7 +68,7 @@ class DurationPredictor(torch.nn.Module):
 
     def __init__(self, in_dims, n_layers=2, n_chans=384, kernel_size=3,
                  dropout_rate=0.1, offset=1.0, dur_loss_type='mse', arch='fs2',
-                 sdp_ratio=0.2, sdp_n_chans=192, gin_channels=0
+                 use_sdp=False, sdp_ratio=0.2, sdp_n_chans=192, gin_channels=0
                  ):
         """Initialize duration predictor module.
         Args:
@@ -451,7 +452,7 @@ class FastSpeech2Encoder(nn.Module):
     def __init__(self, hidden_size, num_layers,
                  ffn_kernel_size=9, ffn_act='gelu',
                  dropout=None, num_heads=2, use_pos_embed=True, rel_pos=True,
-                 use_rope=False, rope_interleaved=True, rope_theta=10000, rotary_dim=None):
+                 use_rope=False, rope_interleaved=True, rope_theta=10000, rotary_dim=None, mix_ln_layer=[]):
         super().__init__()
         self.num_layers = num_layers
         embed_dim = self.hidden_size = hidden_size
@@ -476,9 +477,10 @@ class FastSpeech2Encoder(nn.Module):
             TransformerEncoderLayer(
                 self.hidden_size, self.dropout,
                 kernel_size=ffn_kernel_size, act=ffn_act,
-                num_heads=num_heads, rotary_embed=rotary_embed
+                num_heads=num_heads, rotary_embed=rotary_embed,
+                layer_idx=i, mix_ln_layer=mix_ln_layer
             )
-            for _ in range(self.num_layers)
+            for i in range(self.num_layers)
         ])
         self.layer_norm = nn.LayerNorm(embed_dim)
 
@@ -508,7 +510,7 @@ class FastSpeech2Encoder(nn.Module):
         x = F.dropout(x, p=self.dropout, training=self.training)
         return x
 
-    def forward(self, main_embed, extra_embed, padding_mask, attn_mask=None, return_hiddens=False):
+    def forward(self, main_embed, extra_embed, padding_mask, spk_embed=None, attn_mask=None, return_hiddens=False):
         x = self.forward_embedding(main_embed, extra_embed, padding_mask=padding_mask)  # [B, T, H]
         nonpadding_mask_BT = 1 - padding_mask.float()[:, :, None]  # [B, T, 1]
 
@@ -528,7 +530,7 @@ class FastSpeech2Encoder(nn.Module):
         x = x * nonpadding_mask_BT
         hiddens = []
         for layer in self.layers:
-            x = layer(x, encoder_padding_mask=padding_mask, attn_mask=attn_mask) * nonpadding_mask_BT
+            x = layer(x, encoder_padding_mask=padding_mask, cond=spk_embed, attn_mask=attn_mask) * nonpadding_mask_BT
             if return_hiddens:
                 hiddens.append(x)
         x = self.layer_norm(x) * nonpadding_mask_BT
