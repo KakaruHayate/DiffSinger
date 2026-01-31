@@ -218,13 +218,14 @@ class GaussianDiffusion(nn.Module):
 
         return x_recon, noise
 
-    def inference(self, cond, b=1, x_start=None, device=None):
+    def inference(self, cond, b=1, x_start=None, noise=None, device=None):
         depth = hparams.get('K_step_infer', self.k_step)
         speedup = hparams['diff_speedup']
         if speedup > 0:
             assert depth % speedup == 0, f'Acceleration ratio must be a factor of diffusion depth {depth}.'
 
-        noise = torch.randn(b, self.num_feats, self.out_dims, cond.shape[2], device=device)
+        if noise is None:
+            noise = torch.randn(b, self.num_feats, self.out_dims, cond.shape[2], device=device)
         if self.use_shallow_diffusion:
             t_max = min(depth, self.k_step)
         else:
@@ -350,7 +351,7 @@ class GaussianDiffusion(nn.Module):
         x = x.transpose(2, 3).squeeze(1)  # [B, F, M, T] => [B, T, M] or [B, F, T, M]
         return x
 
-    def forward(self, condition, gt_spec=None, src_spec=None, infer=True):
+    def forward(self, condition, gt_spec=None, src_spec=None, noise=None, infer=True):
         """
             conditioning diffusion, use fastspeech2 encoder output as the condition
         """
@@ -373,7 +374,7 @@ class GaussianDiffusion(nn.Module):
                     spec = spec[:, None, :, :]
             else:
                 spec = None
-            x = self.inference(cond, b=b, x_start=spec, device=device)
+            x = self.inference(cond, b=b, x_start=spec, noise=None, device=device)
             return self.denorm_spec(x)
 
     def norm_spec(self, x):

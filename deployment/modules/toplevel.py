@@ -51,6 +51,7 @@ class DiffSingerAcousticONNX(DiffSingerAcoustic):
         else:
             raise ValueError(f"Invalid diffusion type: {self.diffusion_type}")
         self.mel_base = hparams.get('mel_base', '10')
+        self.use_deterministic_noise = hparams.get('use_deterministic_noise', False)
 
     def ensure_mel_base(self, mel):
         if self.mel_base != 'e':
@@ -69,37 +70,43 @@ class DiffSingerAcousticONNX(DiffSingerAcoustic):
             spk_embed: Tensor = None,
             languages: Tensor = None
     ):
-        condition = self.fs2(
+        condition, noise = self.fs2(
             tokens, durations, f0, variances=variances,
             gender=gender, velocity=velocity, spk_embed=spk_embed,
             languages=languages
         )
         if self.use_shallow_diffusion:
             aux_mel_pred = self.aux_decoder(condition, infer=True)
-            return condition, aux_mel_pred
+            if self.use_deterministic_noise:
+                return condition, aux_mel_pred, noise
+            else:
+                return condition, aux_mel_pred
         else:
-            return condition
+            if self.use_deterministic_noise:
+                return condition, noise
+            else:
+                return condition
 
     def forward_shallow_diffusion(
             self, condition: Tensor, x_start: Tensor,
-            depth, steps: int
+            depth, steps: int, noise: Tensor = None
     ) -> Tensor:
-        mel_pred = self.diffusion(condition, x_start=x_start, depth=depth, steps=steps)
+        mel_pred = self.diffusion(condition, x_start=x_start, depth=depth, noise=noise, steps=steps)
         return self.ensure_mel_base(mel_pred)
 
-    def forward_diffusion(self, condition: Tensor, steps: int):
-        mel_pred = self.diffusion(condition, steps=steps)
+    def forward_diffusion(self, condition: Tensor, steps: int, noise: Tensor = None) -> Tensor:
+        mel_pred = self.diffusion(condition, noise=noise, steps=steps)
         return self.ensure_mel_base(mel_pred)
 
     def forward_shallow_reflow(
             self, condition: Tensor, x_end: Tensor,
-            depth, steps: int
+            depth, steps: int, noise: Tensor = None
     ):
-        mel_pred = self.diffusion(condition, x_end=x_end, depth=depth, steps=steps)
+        mel_pred = self.diffusion(condition, x_end=x_end, depth=depth, noise=noise, steps=steps)
         return self.ensure_mel_base(mel_pred)
 
-    def forward_reflow(self, condition: Tensor, steps: int):
-        mel_pred = self.diffusion(condition, steps=steps)
+    def forward_reflow(self, condition: Tensor, steps: int, noise: Tensor = None):
+        mel_pred = self.diffusion(condition, noise=noise, steps=steps)
         return self.ensure_mel_base(mel_pred)
 
     def view_as_fs2_aux(self) -> nn.Module:
@@ -235,6 +242,9 @@ class DiffSingerVarianceONNX(DiffSingerVariance):
             pitch=None, expr=None, retake=None, spk_embed=None
     ):
         condition = self.forward_mel2x_gather(encoder_out, ph_dur, x_dim=self.hidden_size, check_stretch_embed=True)
+        pitch_noise = None
+        if self.use_deterministic_noise:
+            pitch_noise = self.pitch_noise_generator(condition.transpose(1, 2))
         if self.use_melody_encoder:
             if self.melody_encoder.use_glide_embed and note_glide is None:
                 note_glide = torch.LongTensor([[0]]).to(encoder_out.device)
@@ -272,12 +282,12 @@ class DiffSingerVarianceONNX(DiffSingerVariance):
                 pitch_cond += self.base_pitch_embed(base_pitch[:, :, None])
         if hparams['use_spk_id'] and spk_embed is not None:
             pitch_cond += spk_embed
-        return pitch_cond, base_pitch
+        return pitch_cond, base_pitch, pitch_noise
 
     def forward_pitch_reflow(
-            self, pitch_cond, steps: int = 10
+            self, pitch_cond, steps: int = 10, pitch_noise: Tensor = None
     ):
-        x_pred = self.pitch_predictor(pitch_cond, steps=steps)
+        x_pred = self.pitch_predictor(pitch_cond, steps=steps, noise=pitch_noise)
         return x_pred
 
     def forward_pitch_postprocess(self, x_pred, base_pitch):
@@ -289,6 +299,9 @@ class DiffSingerVarianceONNX(DiffSingerVariance):
             variances: dict = None, retake=None, spk_embed=None
     ):
         condition = self.forward_mel2x_gather(encoder_out, ph_dur, x_dim=self.hidden_size, check_stretch_embed=True)
+        variance_noise = None
+        if self.use_deterministic_noise:
+            variance_noise = self.variance_noise_generator(condition.transpose(1, 2))
         if self.use_variance_scaling:
             variance_cond = condition + self.pitch_embed(pitch[:, :, None] / 12)
         else:
@@ -304,10 +317,10 @@ class DiffSingerVarianceONNX(DiffSingerVariance):
         variance_cond += torch.stack(variance_embeds, dim=-1).sum(-1)
         if hparams['use_spk_id'] and spk_embed is not None:
             variance_cond += spk_embed
-        return variance_cond
+        return variance_cond, variance_noise
 
-    def forward_variance_reflow(self, variance_cond, steps: int = 10):
-        xs_pred = self.variance_predictor(variance_cond, steps=steps)
+    def forward_variance_reflow(self, variance_cond, steps: int = 10, variance_noise: Tensor = None):
+        xs_pred = self.variance_predictor(variance_cond, steps=steps, noise=variance_noise)
         return xs_pred
 
     def forward_variance_postprocess(self, xs_pred):

@@ -11,7 +11,8 @@ from modules.aux_decoder import AuxDecoderAdaptor
 from modules.commons.common_layers import (
     XavierUniformInitLinear as Linear,
     NormalInitEmbedding as Embedding,
-    SinusoidalPosEmb
+    SinusoidalPosEmb,
+    BoxMullerLCGNoise
 )
 from modules.core import (
     GaussianDiffusion, PitchDiffusion, MultiVarianceDiffusion,
@@ -86,7 +87,7 @@ class DiffSingerAcoustic(CategorizedModule, ParameterAdaptorModule):
             self, txt_tokens, mel2ph, f0, key_shift=None, speed=None,
             spk_embed_id=None, languages=None, gt_mel=None, infer=True, **kwargs
     ) -> ShallowDiffusionOutput:
-        condition = self.fs2(
+        condition, noise = self.fs2(
             txt_tokens, mel2ph, f0, key_shift=key_shift, speed=speed,
             spk_embed_id=spk_embed_id, languages=languages,
             **kwargs
@@ -101,7 +102,7 @@ class DiffSingerAcoustic(CategorizedModule, ParameterAdaptorModule):
                     src_mel = aux_mel_pred
             else:
                 aux_mel_pred = src_mel = None
-            mel_pred = self.diffusion(condition, src_spec=src_mel, infer=True)
+            mel_pred = self.diffusion(condition, src_spec=src_mel, noise=noise, infer=True)
             mel_pred *= ((mel2ph > 0).float()[:, :, None])
             return ShallowDiffusionOutput(aux_out=aux_mel_pred, diff_out=mel_pred)
         else:
@@ -131,6 +132,7 @@ class DiffSingerVariance(CategorizedModule, ParameterAdaptorModule):
     def __init__(self, vocab_size):
         CategorizedModule.__init__(self)
         ParameterAdaptorModule.__init__(self)
+        self.use_deterministic_noise = hparams.get('use_deterministic_noise', False)
         self.predict_dur = hparams['predict_dur']
         self.predict_pitch = hparams['predict_pitch']
 
@@ -193,6 +195,8 @@ class DiffSingerVariance(CategorizedModule, ParameterAdaptorModule):
                 )
             else:
                 raise ValueError(f"Invalid diffusion type: {self.diffusion_type}")
+            if self.use_deterministic_noise:
+                self.pitch_noise_generator = BoxMullerLCGNoise(out_dim==pitch_hparams['repeat_bins'])
 
         if self.predict_variances:
             self.pitch_embed = Linear(1, hparams['hidden_size'])
@@ -207,6 +211,8 @@ class DiffSingerVariance(CategorizedModule, ParameterAdaptorModule):
                 self.variance_predictor = self.build_adaptor(cls=MultiVarianceRectifiedFlow)
             else:
                 raise NotImplementedError(self.diffusion_type)
+            if self.use_deterministic_noise:
+                self.variance_noise_generator = BoxMullerLCGNoise(out_dim=hparams['variances_prediction_args']['total_repeat_bins'])
 
         self.use_variance_scaling = hparams.get('use_variance_scaling', False)
         self.custom_variance_scaling_factor = {
@@ -267,6 +273,14 @@ class DiffSingerVariance(CategorizedModule, ParameterAdaptorModule):
         encoder_out = F.pad(encoder_out, [0, 0, 1, 0])
         mel2ph_ = mel2ph[..., None].repeat([1, 1, hparams['hidden_size']])
         condition = torch.gather(encoder_out, 1, mel2ph_)
+        pitch_noise = None
+        variance_noise = None
+        if not self.training and self.use_deterministic_noise:
+            if self.predict_pitch:
+                pitch_noise = self.pitch_noise_generator(condition.transpose(1, 2).detach())
+            if self.predict_variances:
+                variance_noise = self.variance_noise_generator(condition.transpose(1, 2).detach())
+
 
         if self.use_stretch_embed:
             stretch = torch.round(1000 * self.sr(mel2ph, ph_dur))
@@ -334,7 +348,7 @@ class DiffSingerVariance(CategorizedModule, ParameterAdaptorModule):
             if infer:
                 pitch_pred_out = self.pitch_predictor(pitch_cond, infer=True)
             else:
-                pitch_pred_out = self.pitch_predictor(pitch_cond, pitch - base_pitch, infer=False)
+                pitch_pred_out = self.pitch_predictor(pitch_cond, pitch - base_pitch, noise=pitch_noise, infer=False)
         else:
             pitch_pred_out = None
 
@@ -357,7 +371,7 @@ class DiffSingerVariance(CategorizedModule, ParameterAdaptorModule):
             ]
             var_cond += torch.stack(variance_embeds, dim=-1).sum(-1)
 
-        variance_outputs = self.variance_predictor(var_cond, variance_inputs, infer=infer)
+        variance_outputs = self.variance_predictor(var_cond, variance_inputs, noise=variance_noise, infer=infer)
 
         if infer:
             variances_pred_out = self.collect_variance_outputs(variance_outputs)

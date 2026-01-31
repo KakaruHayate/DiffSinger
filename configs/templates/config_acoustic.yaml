@@ -78,6 +78,7 @@ rope_interleaved: false
 use_stretch_embed: true
 use_variance_scaling: true
 use_shallow_diffusion: true
+use_deterministic_noise: true
 T_start: 0.4
 T_start_infer: 0.4
 K_step: 300

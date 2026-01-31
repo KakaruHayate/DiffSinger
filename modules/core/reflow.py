@@ -40,7 +40,7 @@ class RectifiedFlow(nn.Module):
 
         return v_pred, x_end - x_start
 
-    def forward(self, condition, gt_spec=None, src_spec=None, infer=True):
+    def forward(self, condition, gt_spec=None, src_spec=None, noise=None, infer=True):
         cond = condition.transpose(1, 2)
         b, device = condition.shape[0], condition.device
 
@@ -60,7 +60,7 @@ class RectifiedFlow(nn.Module):
                     spec = spec[:, None, :, :]
             else:
                 spec = None
-            x = self.inference(cond, b=b, x_end=spec, device=device)
+            x = self.inference(cond, b=b, x_end=spec, noise=noise, device=device)
             return self.denorm_spec(x)
 
     @torch.no_grad()
@@ -102,8 +102,9 @@ class RectifiedFlow(nn.Module):
         return x, t
 
     @torch.no_grad()
-    def inference(self, cond, b=1, x_end=None, device=None):
-        noise = torch.randn(b, self.num_feats, self.out_dims, cond.shape[2], device=device)
+    def inference(self, cond, b=1, x_end=None, noise=None, device=None):
+        if noise is None:
+            noise = torch.randn(b, self.num_feats, self.out_dims, cond.shape[2], device=device)
         t_start = hparams.get('T_start_infer', self.t_start)
         if self.use_shallow_diffusion and t_start > 0:
             assert x_end is not None, 'Missing shallow diffusion source.'

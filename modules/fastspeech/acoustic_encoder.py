@@ -6,6 +6,7 @@ from modules.commons.common_layers import (
     NormalInitEmbedding as Embedding,
     XavierUniformInitLinear as Linear,
     SinusoidalPosEmb,
+    BoxMullerLCGNoise
 )
 from modules.fastspeech.tts_modules import FastSpeech2Encoder, mel2ph_to_dur, StretchRegulator
 from utils.hparams import hparams
@@ -101,6 +102,10 @@ class FastSpeech2Acoustic(nn.Module):
         if self.use_spk_id:
             self.spk_embed = Embedding(hparams['num_spk'], hparams['hidden_size'])
 
+        self.use_deterministic_noise = hparams.get('use_deterministic_noise', False)
+        if self.use_deterministic_noise:
+            self.noise_generator = BoxMullerLCGNoise(out_dim==hparams['audio_num_mel_bins'])
+
     def forward_variance_embedding(self, condition, key_shift=None, speed=None, **variances):
         if self.use_variance_embeds:
             variance_embeds = torch.stack([
@@ -148,6 +153,10 @@ class FastSpeech2Acoustic(nn.Module):
         mel2ph_ = mel2ph[..., None].repeat([1, 1, encoder_out.shape[-1]])
         condition = torch.gather(encoder_out, 1, mel2ph_)
 
+        noise = None
+        if not self.training and self.use_deterministic_noise:
+            noise = self.noise_generator(condition.transpose(1, 2).detach())
+
         if self.use_stretch_embed:
             stretch = torch.round(1000 * self.sr(mel2ph, dur))
             if self.training and stretch.numel() > 1000:
@@ -172,4 +181,4 @@ class FastSpeech2Acoustic(nn.Module):
             condition, key_shift=key_shift, speed=speed, **kwargs
         )
 
-        return condition
+        return condition, noise

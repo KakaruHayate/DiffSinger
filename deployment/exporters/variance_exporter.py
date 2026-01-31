@@ -402,43 +402,57 @@ class DiffSingerVarianceExporter(BaseExporter):
             )
 
             print(f'Scripting {self.pitch_predictor_class_name}...')
+            use_deterministic_noise = hparams.get('use_deterministic_noise', False)
+            pitch_example_inputs = [
+                (
+                    condition.transpose(1, 2),
+                    1,  # p_sample branch
+                    noise if use_deterministic_noise else None
+                ),
+                (
+                    condition.transpose(1, 2),
+                    dummy_steps,  # p_sample_plms branch
+                    noise if use_deterministic_noise else None
+                )
+            ]
             pitch_predictor = torch.jit.script(
                 pitch_predictor,
-                example_inputs=[
-                    (
-                        condition.transpose(1, 2),
-                        1  # p_sample branch
-                    ),
-                    (
-                        condition.transpose(1, 2),
-                        dummy_steps  # p_sample_plms branch
-                    )
-                ]
+                example_inputs=pitch_example_inputs
             )
 
             print(f'Exporting {self.pitch_predictor_class_name}...')
+            pitch_export_inputs = (
+                condition.transpose(1, 2),
+                dummy_steps,
+                noise if use_deterministic_noise else None
+            )
+            pitch_input_names = [
+                'pitch_cond',
+                'steps',
+                *(['pitch_noise'] if use_deterministic_noise else [])
+            ]
+            pitch_dynamic_axes = {
+                'pitch_cond': {
+                    1: 'n_frames'
+                },
+                'x_pred': {
+                    1: 'n_frames'
+                }
+            }
+            if use_deterministic_noise:
+                pitch_dynamic_axes['pitch_noise'] = {
+                    3: 'n_frames'
+                }
+            
             torch.onnx.export(
                 pitch_predictor,
-                (
-                    condition.transpose(1, 2),
-                    dummy_steps
-                ),
+                pitch_export_inputs,
                 self.pitch_predictor_cache_path,
-                input_names=[
-                    'pitch_cond',
-                    'steps'
-                ],
+                input_names=pitch_input_names,
                 output_names=[
                     'x_pred'
                 ],
-                dynamic_axes={
-                    'pitch_cond': {
-                        1: 'n_frames'
-                    },
-                    'x_pred': {
-                        1: 'n_frames'
-                    }
-                },
+                dynamic_axes=pitch_dynamic_axes,
                 opset_version=15
             )
 
@@ -549,43 +563,56 @@ class DiffSingerVarianceExporter(BaseExporter):
             )
 
             print(f'Scripting {self.multi_var_predictor_class_name}...')
+            variance_example_inputs = [
+                (
+                    condition.transpose(1, 2),
+                    1,  # p_sample branch
+                    noise if use_deterministic_noise else None
+                ),
+                (
+                    condition.transpose(1, 2),
+                    dummy_steps,  # p_sample_plms branch
+                    noise if use_deterministic_noise else None
+                )
+            ]
             multi_var_predictor = torch.jit.script(
                 multi_var_predictor,
-                example_inputs=[
-                    (
-                        condition.transpose(1, 2),
-                        1  # p_sample branch
-                    ),
-                    (
-                        condition.transpose(1, 2),
-                        dummy_steps  # p_sample_plms branch
-                    )
-                ]
+                example_inputs=variance_example_inputs
             )
 
             print(f'Exporting {self.multi_var_predictor_class_name}...')
+            variance_export_inputs = (
+                condition.transpose(1, 2),
+                dummy_steps,
+                noise if use_deterministic_noise else None
+            )
+            variance_input_names = [
+                'variance_cond',
+                'steps',
+                *(['variance_noise'] if use_deterministic_noise else [])
+            ]
+            variance_dynamic_axes = {
+                'variance_cond': {
+                    1: 'n_frames'
+                },
+                'xs_pred': {
+                    (1 if len(self.model.variance_prediction_list) == 1 else 2): 'n_frames'
+                }
+            }
+            if use_deterministic_noise:
+                variance_dynamic_axes['variance_noise'] = {
+                    3: 'n_frames'
+                }
+            
             torch.onnx.export(
                 multi_var_predictor,
-                (
-                    condition.transpose(1, 2),
-                    dummy_steps
-                ),
+                variance_export_inputs,
                 self.multi_var_predictor_cache_path,
-                input_names=[
-                    'variance_cond',
-                    'steps'
-                ],
+                input_names=variance_input_names,
                 output_names=[
                     'xs_pred'
                 ],
-                dynamic_axes={
-                    'variance_cond': {
-                        1: 'n_frames'
-                    },
-                    'xs_pred': {
-                        (1 if len(self.model.variance_prediction_list) == 1 else 2): 'n_frames'
-                    }
-                },
+                dynamic_axes=variance_dynamic_axes,
                 opset_version=15
             )
 

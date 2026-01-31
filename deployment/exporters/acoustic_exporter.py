@@ -279,16 +279,20 @@ class DiffSingerAcousticExporter(BaseExporter):
             condition,
             *([x_aux, dummy_depth] if self.model.use_shallow_diffusion else [])
         ]
+        use_deterministic_noise = hparams.get('use_deterministic_noise', False)
+        
         major_mel_decoder = torch.jit.script(
             major_mel_decoder,
             example_inputs=[
                 (
                     *diffusion_inputs,
-                    1  # p_sample branch
+                    1,  # p_sample branch
+                    noise if use_deterministic_noise else None
                 ),
                 (
                     *diffusion_inputs,
-                    dummy_steps  # p_sample_plms branch
+                    dummy_steps,  # p_sample_plms branch
+                    noise if use_deterministic_noise else None
                 )
             ]
         )
@@ -299,13 +303,15 @@ class DiffSingerAcousticExporter(BaseExporter):
             major_mel_decoder,
             (
                 *diffusion_inputs,
-                dummy_steps
+                dummy_steps,
+                noise if use_deterministic_noise else None
             ),
             self.diffusion_cache_path,
             input_names=[
                 'condition',
                 *(['x_aux', 'depth'] if self.model.use_shallow_diffusion else []),
-                'steps'
+                'steps',
+                *(['noise'] if use_deterministic_noise else [])
             ],
             output_names=[
                 'mel'
@@ -317,7 +323,8 @@ class DiffSingerAcousticExporter(BaseExporter):
                 **({'x_aux': {1: 'n_frames'}} if self.model.use_shallow_diffusion else {}),
                 'mel': {
                     1: 'n_frames'
-                }
+                },
+                **({'noise': {3: 'n_frames'}} if use_deterministic_noise else {}),
             },
             opset_version=15
         )

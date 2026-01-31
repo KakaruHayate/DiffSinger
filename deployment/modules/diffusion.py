@@ -102,12 +102,13 @@ class GaussianDiffusionONNX(GaussianDiffusion):
         b = (self.spec_max + self.spec_min) / 2.
         return x * k + b
 
-    def forward(self, condition, x_start=None, depth=None, steps: int = 10):
+    def forward(self, condition, x_start=None, depth=None, noise=None, steps: int = 10):
         condition = condition.transpose(1, 2)  # [1, T, H] => [1, H, T]
         device = condition.device
         n_frames = condition.shape[2]
 
-        noise = torch.randn((1, self.num_feats, self.out_dims, n_frames), device=device)
+        if noise is None:
+            noise = torch.randn((1, self.num_feats, self.out_dims, n_frames), device=device)
         if x_start is None:
             speedup = max(1, self.timesteps // steps)
             speedup = self.timestep_factors[torch.sum(self.timestep_factors <= speedup) - 1]

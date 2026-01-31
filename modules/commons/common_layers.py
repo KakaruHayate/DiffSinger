@@ -414,3 +414,161 @@ class SinusoidalPosEmb(nn.Module):
         emb = x.unsqueeze(-1) * emb.unsqueeze(0)
         emb = torch.cat((emb.sin(), emb.cos()), dim=-1)
         return emb
+
+
+class BoxMullerLCGNoise(nn.Module):
+    """
+    Stateless, Deterministic Standard Normal Noise Generator for ONNX Deployment.
+    
+    Description:
+        This module generates high-quality, completely deterministic pseudo-random 
+        noise following a Standard Normal distribution (Gaussian with mean=0, std=1).
+        Unlike `torch.randn`, it is entirely stateless and computes the noise purely
+        based on the input condition's unique "fingerprint". 
+        
+        It is highly optimized for ONNX export (Opset >= 11) by strictly using 
+        element-wise arithmetic (Add, Mul, Modulo) in the Int64 space, completely 
+        avoiding unsupported bitwise operators and Float32 catastrophic cancellation.
+        
+    Formulas:
+        1. Linear Congruential Generator (LCG) for Hashing:
+           X_{n+1} = (a * X_n + c) mod m
+           
+        2. Box-Muller Transform for Uniform to Gaussian mapping:
+           Z = sqrt(-2 * ln(U_1)) * cos(2 * pi * U_2)
+           (where U_1 and U_2 are independent Uniform(0, 1) random variables)
+    """
+    def __init__(self, out_dim=128):
+        """
+        Args:
+            out_dim (int): The feature dimension of the output noise.
+        """
+        super().__init__()
+        self.out_dim = out_dim
+        
+        # Large prime numbers used as spatial coordinate mixing weights.
+        # These ensure that each point in the 3D grid (Batch, Time, Channel) 
+        # gets a uniquely scaled starting state.
+        self.register_buffer("p1", torch.tensor(73856093, dtype=torch.int64))
+        self.register_buffer("p2", torch.tensor(19349663, dtype=torch.int64))
+        self.register_buffer("p3", torch.tensor(83492791, dtype=torch.int64))
+        self.register_buffer("p4", torch.tensor(39916801, dtype=torch.int64))
+        self.register_buffer("p5", torch.tensor(479001599, dtype=torch.int64))
+        self.register_buffer("p6", torch.tensor(15485863, dtype=torch.int64))
+        
+        # LCG Engine 1 Constants (derived from glibc)
+        self.register_buffer("a1", torch.tensor(1103515245, dtype=torch.int64))
+        self.register_buffer("c1", torch.tensor(12345, dtype=torch.int64))
+        self.register_buffer("m1", torch.tensor(2147483648, dtype=torch.int64)) # 2^31
+        
+        # LCG Engine 2 Constants (derived from Numerical Recipes)
+        self.register_buffer("a2", torch.tensor(1664525, dtype=torch.int64))
+        self.register_buffer("c2", torch.tensor(1013904223, dtype=torch.int64))
+        self.register_buffer("m2", torch.tensor(4294967296, dtype=torch.int64)) # 2^32
+
+    def _lcg_hash1(self, v):
+        """
+        Applies 3 consecutive iterations of LCG Engine 1 to force an avalanche effect.
+        Args:
+            v (torch.Tensor): Int64 state tensor.
+        Returns: 
+            torch.Tensor: Hashed Int64 tensor.
+        """
+        v = torch.remainder(v * self.a1 + self.c1, self.m1)
+        v = torch.remainder(v * self.a1 + self.c1, self.m1)
+        v = torch.remainder(v * self.a1 + self.c1, self.m1)
+        return v
+
+    def _lcg_hash2(self, v):
+        """
+        Applies 3 consecutive iterations of LCG Engine 2 to force an avalanche effect.
+        Args:
+            v (torch.Tensor): Int64 state tensor.
+        Returns: 
+            torch.Tensor: Hashed Int64 tensor.
+        """
+        v = torch.remainder(v * self.a2 + self.c2, self.m2)
+        v = torch.remainder(v * self.a2 + self.c2, self.m2)
+        v = torch.remainder(v * self.a2 + self.c2, self.m2)
+        return v
+
+    def forward(self, x):
+        """
+        Forward pass to generate deterministic noise based on the input 'x'.
+        
+        Args:
+            x (torch.Tensor): Input condition tensor. 
+                              Shape: [B, T, in_dim]
+        Returns:
+            noise (torch.Tensor): Standard Normal noise tensor.
+                                  Shape: [B, T, out_dim]
+        """
+        B, T, _ = x.shape
+        device = x.device
+        
+        # ==========================================
+        # Step 1: Robust Int64 Fingerprinting
+        # ==========================================
+        # Create channel-wise weights to prevent symmetric feature cancellation
+        # Shape: [1, 1, out_dim]
+        d_weight = torch.arange(1, self.out_dim + 1, dtype=torch.int64, device=device).view(1, 1, self.out_dim)
+        
+        # Scale the input by 10000.0 and cast to Int64 to capture tiny perturbations (e.g., 1e-4)
+        # This completely prevents Float32 Catastrophic Cancellation (large numbers eating small numbers)
+        # Shape: [B, T, in_dim] -> (assuming in_dim == out_dim for weight multiplication, padded/sliced implicitly by broadcasting if needed)
+        # Note: To be perfectly safe across varying in_dim, we use x's actual shape dynamically.
+        in_dim = x.shape[-1]
+        actual_d_weight = torch.arange(1, in_dim + 1, dtype=torch.int64, device=device).view(1, 1, in_dim)
+        x_int = (x * 10000.0).to(torch.int64)
+        
+        # Global reduction (sum of absolute weighted values) to yield a single deterministic seed per batch
+        # Shape: [B, 1, 1]
+        cond_seed = torch.sum(torch.abs(x_int) * actual_d_weight, dim=(1, 2)).view(B, 1, 1)
+        
+        # ==========================================
+        # Step 2: 3D Coordinate Grid Generation
+        # ==========================================
+        # b_idx Shape: [B, 1, 1]
+        # t_idx Shape: [1, T, 1]
+        # d_idx Shape: [1, 1, out_dim]
+        b_idx = torch.arange(B, dtype=torch.int64, device=device).view(B, 1, 1)
+        t_idx = torch.arange(T, dtype=torch.int64, device=device).view(1, T, 1)
+        d_idx = torch.arange(self.out_dim, dtype=torch.int64, device=device).view(1, 1, self.out_dim)
+        
+        # ==========================================
+        # Step 3: State Initialization (Seed + Coordinates)
+        # ==========================================
+        # Mix the global condition seed with spatial coordinates using prime scaling.
+        # This ensures every temporal & channel position starts with a unique trajectory.
+        # Shape: [B, T, out_dim]
+        state1 = cond_seed + b_idx * self.p1 + t_idx * self.p2 + d_idx * self.p3
+        state2 = cond_seed + b_idx * self.p4 + t_idx * self.p5 + d_idx * self.p6
+        
+        # ==========================================
+        # Step 4: LCG Hash (Avalanche Effect)
+        # ==========================================
+        # Pass through independent LCG engines to shatter any linear correlations.
+        # Shape: [B, T, out_dim]
+        h1 = self._lcg_hash1(state1)
+        h2 = self._lcg_hash2(state2)
+        
+        # ==========================================
+        # Step 5: Uniform Mapping [0, 1)
+        # ==========================================
+        # Convert the pseudo-random integers to Float32 uniform distribution.
+        # Shape: [B, T, out_dim]
+        u1 = h1.to(torch.float32) / self.m1.to(torch.float32)
+        u2 = h2.to(torch.float32) / self.m2.to(torch.float32)
+        
+        # Clamp u1 to prevent log(0) which results in NaN or -Inf.
+        # 1e-7 is extremely safe for single-precision Float32.
+        u1 = torch.clamp(u1, min=1e-7, max=1.0)
+        
+        # ==========================================
+        # Step 6: Box-Muller Transform
+        # ==========================================
+        # Convert two independent Uniform variables into a Standard Normal variable.
+        # Shape: [B, T, out_dim]
+        noise = torch.sqrt(-2.0 * torch.log(u1)) * torch.cos(2.0 * math.pi * u2)
+        
+        return noise

@@ -114,6 +114,10 @@ class FastSpeech2AcousticONNX(FastSpeech2Acoustic):
         encoded = F.pad(encoded, (0, 0, 1, 0))
         condition = torch.gather(encoded, 1, mel2ph)
 
+        noise = None
+        if self.use_deterministic_noise:
+            noise = self.noise_generator(condition.transpose(1, 2))
+
         if self.use_stretch_embed:
             stretch = torch.round(1000 * self.sr(_mel2ph, durations))
             table = self.stretch_embed(torch.arange(0, 1001, device=stretch.device))
@@ -160,7 +164,7 @@ class FastSpeech2AcousticONNX(FastSpeech2Acoustic):
                 condition += self.frozen_spk_embed
             else:
                 condition += spk_embed
-        return condition
+        return condition, noise
 
 
 class FastSpeech2VarianceONNX(FastSpeech2Variance):
