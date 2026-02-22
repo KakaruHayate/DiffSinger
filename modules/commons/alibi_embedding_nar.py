@@ -14,12 +14,25 @@ def get_alibi_slopes(num_heads: int) -> list:
     return slopes
 
 class ALiBiEmbedding(torch.nn.Module):
-    def __init__(self, num_heads: int):
+    def __init__(self, num_heads: int, alibi_slopes=None):
         super().__init__()
         self.num_heads = num_heads
 
-        slopes = torch.tensor(get_alibi_slopes(num_heads), dtype=torch.float32).view(1, num_heads, 1, 1)
-        self.register_buffer('slopes', slopes, persistent=False)
+        # If alibi_slopes is provided, validate and use it directly
+        if alibi_slopes is not None:
+            if not isinstance(alibi_slopes, (list, tuple)):
+                raise TypeError(f"alibi_slopes must be a list or tuple, got {type(alibi_slopes)}")
+            if len(alibi_slopes) != num_heads:
+                raise ValueError(f"alibi_slopes length {len(alibi_slopes)} does not match num_heads {num_heads}")
+            if not all(isinstance(s, (int, float)) and s != 0 for s in alibi_slopes):
+                raise ValueError("alibi_slopes must contain non-zero numeric values")
+            slopes = alibi_slopes
+        else:
+            # Use automatic slope generation
+            slopes = get_alibi_slopes(num_heads)
+
+        slopes_tensor = torch.tensor(slopes, dtype=torch.float32).view(1, num_heads, 1, 1)
+        self.register_buffer('slopes', slopes_tensor, persistent=False)
 
     def forward(self, x: Tensor) -> Tensor:
         # x : [batch, heads, seq_len, seq_len] or [batch_size, seq_len, hidden]

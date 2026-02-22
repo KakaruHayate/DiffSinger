@@ -36,6 +36,7 @@ class FastSpeech2Variance(nn.Module):
             use_pos_embed=hparams['use_pos_embed'], rel_pos=hparams.get('rel_pos', False), 
             use_rope=hparams.get('use_rope', False), use_alibi=hparams.get('use_alibi', False),
             rope_interleaved=hparams.get('rope_interleaved', True), rope_theta=hparams.get('rope_theta', 10000),
+            alibi_slopes=hparams.get('alibi_slopes', None),
             nope_layer=hparams.get('nope_layer', [])
         )
 
@@ -132,6 +133,7 @@ class MelodyEncoder(nn.Module):
             use_pos_embed=get_hparam('use_pos_embed'), rel_pos=get_hparam('rel_pos'),
             use_rope=get_hparam('use_rope'), use_alibi=get_hparam('use_alibi', False),
             rope_interleaved=hparams.get('rope_interleaved', True), rope_theta=get_hparam('rope_theta', 10000),
+            alibi_slopes=get_hparam('alibi_slopes', None),
             nope_layer=get_hparam('nope_layer', [])
         )
         self.out_proj = Linear(hidden_size, hparams['hidden_size'])

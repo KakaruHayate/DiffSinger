@@ -373,6 +373,7 @@ class FastSpeech2Encoder(nn.Module):
                  ffn_kernel_size=9, ffn_act='gelu',
                  dropout=None, num_heads=2, use_pos_embed=True, rel_pos=True,
                  use_rope=False, use_alibi=False, rope_interleaved=True, rope_theta=10000,
+                 alibi_slopes=None,
                  mix_ln_layer=[], nope_layer=[]):
         super().__init__()
         self.num_layers = num_layers
@@ -395,7 +396,7 @@ class FastSpeech2Encoder(nn.Module):
             rotary_embed = None
         
         if use_pos_embed and use_alibi:
-            alibi_embed = ALiBiEmbedding(num_heads)
+            alibi_embed = ALiBiEmbedding(num_heads, alibi_slopes=alibi_slopes)
         else:
             alibi_embed = None
         

@@ -40,6 +40,7 @@ use_alibi: true
 nope_layer: []
 rope_interleaved: false
 rope_theta: 10000
+alibi_slopes: [0.4, 0.1]
 use_stretch_embed: false
 use_variance_scaling: true
 rel_pos: true
