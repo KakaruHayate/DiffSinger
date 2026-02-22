@@ -381,10 +381,6 @@ class FastSpeech2Encoder(nn.Module):
         self.dropout = dropout
         self.use_pos_embed = use_pos_embed
         
-        # Check if both use_rope and use_alibi are enabled
-        if use_rope and use_alibi:
-            raise ValueError("use_rope and use_alibi cannot be enabled at the same time.")
-        
         if use_pos_embed and use_rope:
             if embed_dim % (num_heads * 2) != 0:
                 raise ValueError(

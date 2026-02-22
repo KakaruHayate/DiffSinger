@@ -64,11 +64,11 @@ tension_logit_min: -10.0
 tension_logit_max: 10.0
 
 enc_ffn_kernel_size: 3
-use_rope: false
+use_rope: true
 use_alibi: true
 nope_layer: []
 rope_interleaved: false
-rope_theta: 10000
+rope_theta: 150
 alibi_slopes: [0.4, 0.1]
 use_stretch_embed: false
 use_variance_scaling: true
