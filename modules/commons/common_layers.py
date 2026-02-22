@@ -282,7 +282,7 @@ class TransformerFFNLayer(nn.Module):
 
 
 class MultiheadSelfAttentionWithRoPE(nn.Module):
-    def __init__(self, embed_dim, num_heads, dropout=0.1, bias=False, rotary_embed=None):
+    def __init__(self, embed_dim, num_heads, dropout=0.1, bias=False, rotary_embed=None, alibi_embed=None):
         super().__init__()
         assert embed_dim % num_heads == 0, "Embedding dimension must be divisible by number of heads"
         
@@ -301,6 +301,9 @@ class MultiheadSelfAttentionWithRoPE(nn.Module):
         
         # Rotary Embeddings
         self.rotary_embed = rotary_embed
+        
+        # ALiBi Embeddings
+        self.alibi_embed = alibi_embed
         
         # Initialization parameters
         nn.init.xavier_uniform_(self.in_proj.weight)
@@ -330,6 +333,11 @@ class MultiheadSelfAttentionWithRoPE(nn.Module):
         # Compute attention scores
         scores = torch.matmul(Q, K.transpose(-2, -1)) / np.sqrt(self.head_dim)  # (B, H, L, L)
 
+        # Apply ALiBi bias if available
+        if self.alibi_embed is not None:
+            alibi_bias = self.alibi_embed(scores)
+            scores = scores + alibi_bias
+
         # Apply key padding mask if provided
         if key_padding_mask is not None:
             # Expand mask to match attention scores shape
@@ -354,7 +362,7 @@ class MultiheadSelfAttentionWithRoPE(nn.Module):
 
 class EncSALayer(nn.Module):
     def __init__(self, c, num_heads, dropout, attention_dropout=0.1,
-                 relu_dropout=0.1, kernel_size=9, act='gelu', rotary_embed=None, 
+                 relu_dropout=0.1, kernel_size=9, act='gelu', rotary_embed=None, alibi_embed=None,
                  layer_idx=None, mix_ln_layer=[]
                  ):
         super().__init__()
@@ -367,16 +375,18 @@ class EncSALayer(nn.Module):
             self.layer_norm1 = Mixed_LayerNorm(c, c)
         else:
             self.layer_norm1 = LayerNorm(c)
-        if rotary_embed is None:
+        if rotary_embed is None and alibi_embed is None:
             self.self_attn = MultiheadAttention(
                 c, num_heads, dropout=attention_dropout, bias=False, batch_first=False
             )
             self.use_rope = False
+            self.use_alibi = False
         else:
             self.self_attn = MultiheadSelfAttentionWithRoPE(
-                c, num_heads, dropout=attention_dropout, bias=False, rotary_embed=rotary_embed
+                c, num_heads, dropout=attention_dropout, bias=False, rotary_embed=rotary_embed, alibi_embed=alibi_embed
             )
-            self.use_rope = True
+            self.use_rope = rotary_embed is not None
+            self.use_alibi = alibi_embed is not None
         if self.use_mix_ln:
             self.layer_norm2 = Mixed_LayerNorm(c, c)
         else:
@@ -395,7 +405,7 @@ class EncSALayer(nn.Module):
             x = self.layer_norm1(x, cond)
         else:
             x = self.layer_norm1(x)
-        if self.use_rope:
+        if self.use_rope or self.use_alibi:
             x = self.self_attn(x, key_padding_mask=encoder_padding_mask)
         else:
             x = x.transpose(0, 1)

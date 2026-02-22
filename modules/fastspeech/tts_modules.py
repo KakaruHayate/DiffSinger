@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 from modules.commons.rotary_embedding_torch import RotaryEmbedding
+from modules.commons.alibi_embedding_nar import ALiBiEmbedding
 from modules.commons.common_layers import SinusoidalPositionalEmbedding, EncSALayer, AdamWLinear
 from modules.commons.espnet_positional_embedding import RelPositionalEncoding
 
@@ -12,13 +13,13 @@ DEFAULT_MAX_TARGET_POSITIONS = 2000
 
 
 class TransformerEncoderLayer(nn.Module):
-    def __init__(self, hidden_size, dropout, kernel_size=None, act='gelu', num_heads=2, rotary_embed=None, layer_idx=None, mix_ln_layer=None):
+    def __init__(self, hidden_size, dropout, kernel_size=None, act='gelu', num_heads=2, rotary_embed=None, alibi_embed=None, layer_idx=None, mix_ln_layer=None):
         super().__init__()
         self.op = EncSALayer(
             hidden_size, num_heads, dropout=dropout,
             attention_dropout=0.0, relu_dropout=dropout,
             kernel_size=kernel_size,
-            act=act, rotary_embed=rotary_embed,
+            act=act, rotary_embed=rotary_embed, alibi_embed=alibi_embed,
             layer_idx=layer_idx, mix_ln_layer=mix_ln_layer
         )
 
@@ -371,26 +372,40 @@ class FastSpeech2Encoder(nn.Module):
     def __init__(self, hidden_size, num_layers,
                  ffn_kernel_size=9, ffn_act='gelu',
                  dropout=None, num_heads=2, use_pos_embed=True, rel_pos=True,
-                 use_rope=False, rope_interleaved=True, mix_ln_layer=[]):
+                 use_rope=False, use_alibi=False, rope_interleaved=True, rope_theta=10000,
+                 mix_ln_layer=[], nope_layer=[]):
         super().__init__()
         self.num_layers = num_layers
         embed_dim = self.hidden_size = hidden_size
         self.dropout = dropout
         self.use_pos_embed = use_pos_embed
+        
+        # Check if both use_rope and use_alibi are enabled
+        if use_rope and use_alibi:
+            raise ValueError("use_rope and use_alibi cannot be enabled at the same time.")
+        
         if use_pos_embed and use_rope:
             if embed_dim % (num_heads * 2) != 0:
                 raise ValueError(
                     "RoPE requires the hidden size to be multiple of "
                     f"num_heads * 2 = {num_heads * 2}, but got {embed_dim}."
                 )
-            rotary_embed = RotaryEmbedding(dim=embed_dim // num_heads, interleaved=rope_interleaved)
+            rotary_embed = RotaryEmbedding(dim=embed_dim // num_heads, theta=rope_theta, interleaved=rope_interleaved)
         else:
             rotary_embed = None
+        
+        if use_pos_embed and use_alibi:
+            alibi_embed = ALiBiEmbedding(num_heads)
+        else:
+            alibi_embed = None
+        
         self.layers = nn.ModuleList([
             TransformerEncoderLayer(
                 self.hidden_size, self.dropout,
                 kernel_size=ffn_kernel_size, act=ffn_act,
-                num_heads=num_heads, rotary_embed=rotary_embed,
+                num_heads=num_heads, 
+                rotary_embed=rotary_embed if i not in nope_layer else None,
+                alibi_embed=alibi_embed if i not in nope_layer else None,
                 layer_idx=i, mix_ln_layer=mix_ln_layer
             )
             for i in range(self.num_layers)
@@ -400,7 +415,7 @@ class FastSpeech2Encoder(nn.Module):
         self.embed_scale = math.sqrt(hidden_size)
         self.padding_idx = 0
         self.rel_pos = rel_pos
-        if use_rope:
+        if use_rope or use_alibi:
             self.embed_positions = None
         elif self.rel_pos:
             self.embed_positions = RelPositionalEncoding(hidden_size, dropout_rate=0.0)

@@ -39,13 +39,15 @@ class FastSpeech2Acoustic(nn.Module):
             self.mix_ln_layer = hparams['mix_ln_layer']
         else:
             self.mix_ln_layer = []
+        self.nope_layer = hparams.get('nope_layer', [])
         self.encoder = FastSpeech2Encoder(
             hidden_size=hparams['hidden_size'], num_layers=hparams['enc_layers'],
             ffn_kernel_size=hparams['enc_ffn_kernel_size'], ffn_act=hparams['ffn_act'],
             dropout=hparams['dropout'], num_heads=hparams['num_heads'],
             use_pos_embed=hparams['use_pos_embed'], rel_pos=hparams.get('rel_pos', False), 
-            use_rope=hparams.get('use_rope', False), rope_interleaved=hparams.get('rope_interleaved', True), 
-            mix_ln_layer=self.mix_ln_layer
+            use_rope=hparams.get('use_rope', False), use_alibi=hparams.get('use_alibi', False),
+            rope_interleaved=hparams.get('rope_interleaved', True), rope_theta=hparams.get('rope_theta', 10000),
+            mix_ln_layer=self.mix_ln_layer, nope_layer=self.nope_layer
         )
 
         self.pitch_embed = AdamWLinear(1, hparams['hidden_size'])
