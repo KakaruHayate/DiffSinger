@@ -73,6 +73,8 @@ augmentation_args:
 # diffusion and shallow diffusion
 diffusion_type: reflow
 reflow_type: x-pred
+use_ffl_loss: true
+ffl_weight: 0.01
 enc_ffn_kernel_size: 3
 use_rope: true
 rope_interleaved: false
