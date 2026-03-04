@@ -5,7 +5,7 @@ from typing import List, Tuple
 import torch
 
 from modules.core import (
-    RectifiedFlow, PitchRectifiedFlow, MultiVarianceRectifiedFlow
+    RectifiedFlow, PitchRectifiedFlow, MultiVarianceRectifiedFlow, XPredRectifiedFlow
 )
 
 

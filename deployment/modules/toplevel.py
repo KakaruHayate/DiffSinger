@@ -10,7 +10,8 @@ from deployment.modules.diffusion import (
     GaussianDiffusionONNX, PitchDiffusionONNX, MultiVarianceDiffusionONNX
 )
 from deployment.modules.rectified_flow import (
-    RectifiedFlowONNX, PitchRectifiedFlowONNX, MultiVarianceRectifiedFlowONNX
+    RectifiedFlowONNX, PitchRectifiedFlowONNX, MultiVarianceRectifiedFlowONNX,
+    XPredRectifiedFlowONNX
 )
 from deployment.modules.fastspeech2 import FastSpeech2AcousticONNX, FastSpeech2VarianceONNX
 from modules.toplevel import DiffSingerAcoustic, DiffSingerVariance
@@ -38,16 +39,31 @@ class DiffSingerAcousticONNX(DiffSingerAcoustic):
                 spec_max=hparams['spec_max']
             )
         elif self.diffusion_type == 'reflow':
-            self.diffusion = RectifiedFlowONNX(
-                out_dims=out_dims,
-                num_feats=1,
-                t_start=hparams['T_start'],
-                time_scale_factor=hparams['time_scale_factor'],
-                backbone_type=self.backbone_type,
-                backbone_args=self.backbone_args,
-                spec_min=hparams['spec_min'],
-                spec_max=hparams['spec_max']
-            )
+            self.reflow_type = hparams.get('reflow_type', 'v-pred')
+            if self.reflow_type == 'v-pred':
+                self.diffusion = RectifiedFlowONNX(
+                    out_dims=out_dims,
+                    num_feats=1,
+                    t_start=hparams['T_start'],
+                    time_scale_factor=hparams['time_scale_factor'],
+                    backbone_type=self.backbone_type,
+                    backbone_args=self.backbone_args,
+                    spec_min=hparams['spec_min'],
+                    spec_max=hparams['spec_max']
+                )
+            elif self.reflow_type == 'x-pred':
+                self.diffusion = XPredRectifiedFlowONNX(
+                    out_dims=out_dims,
+                    num_feats=1,
+                    t_start=hparams['T_start'],
+                    time_scale_factor=hparams['time_scale_factor'],
+                    backbone_type=self.backbone_type,
+                    backbone_args=self.backbone_args,
+                    spec_min=hparams['spec_min'],
+                    spec_max=hparams['spec_max']
+                )
+            else:
+                raise NotImplementedError(self.reflow_type)
         else:
             raise ValueError(f"Invalid diffusion type: {self.diffusion_type}")
         self.mel_base = hparams.get('mel_base', '10')
