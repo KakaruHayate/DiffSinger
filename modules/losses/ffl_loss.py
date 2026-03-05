@@ -12,7 +12,6 @@ class MelFocalFrequencyLoss(nn.Module):
     def denorm_spec(self, x):
         return (x + 1) / 2 * (self.spec_max - self.spec_min) + self.spec_min
 
-    @staticmethod
     def _mask_non_padding(self, pred, target, non_padding=None):
         if non_padding is not None:
             non_padding = non_padding.transpose(1, 2).unsqueeze(1)
