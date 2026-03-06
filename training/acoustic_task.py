@@ -112,8 +112,8 @@ class AcousticTask(BaseTask):
             self.mel_loss = RectifiedFlowLoss(
                 loss_type=hparams['main_loss_type'], log_norm=hparams['main_loss_log_norm']
             )
-            self.use_ffl_loss = hparams['reflow_type'] == 'x-pred' and hparams['use_ffl_loss']
-            if self.use_ffl_loss:
+            self.use_ssim_loss = hparams['reflow_type'] == 'x-pred' and hparams['use_ssim_loss']
+            if self.use_ssim_loss:
                 self.ssim_loss = SSIMLoss(loss_weight=hparams['ssim_loss'])
                 self.register_validation_loss('ssim_loss')
         else:

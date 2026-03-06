@@ -53,7 +53,7 @@ class LYNXNet2(nn.Module):
             )
             nn.init.kaiming_normal_(self.input_projection[0].weight)
             nn.init.kaiming_normal_(self.input_projection[1].weight)
-            nn.init.constant_(self.input_projection[1], 0)
+            nn.init.constant_(self.input_projection[1].bias, 0)
         else:
             self.input_projection = nn.Linear(in_dims * n_feats, num_channels)
             nn.init.kaiming_normal_(self.input_projection.weight)
