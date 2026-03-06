@@ -94,8 +94,6 @@ backbone_args:
   dropout_rate: 0.0
   use_conditioner_cache: true
   glu_type: 'atanglu'
-  use_bottleneck_layer: true
-  bottleneck_dim: 128
 #backbone_type: 'wavenet'
 #backbone_args:
 #  num_channels: 512
