@@ -2,14 +2,20 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from modules.commons.common_layers import SinusoidalPosEmb, SwiGLU, Conv1d, Transpose
+from modules.commons.common_layers import SinusoidalPosEmb, SwiGLU, ATanGLU, Transpose, AdamWLinear
 from utils.hparams import hparams
 
 
 class LYNXNet2Block(nn.Module):
-    def __init__(self, dim, expansion_factor, kernel_size=31, dropout=0.):
+    def __init__(self, dim, expansion_factor, kernel_size=31, dropout=0., glu_type='swiglu'):
         super().__init__()
         inner_dim = int(dim * expansion_factor)
+        if glu_type == 'swiglu':
+            _glu = SwiGLU()
+        elif glu_type == 'atanglu':
+            _glu = ATanGLU()
+        else:
+            raise ValueError(f'{glu_type} is not a valid activation')
         if float(dropout) > 0.:
             _dropout = nn.Dropout(dropout)
         else:
@@ -20,9 +26,9 @@ class LYNXNet2Block(nn.Module):
             nn.Conv1d(dim, dim, kernel_size=kernel_size, padding=kernel_size // 2, groups=dim),
             Transpose((1, 2)),
             nn.Linear(dim, inner_dim * 2),
-            SwiGLU(),
+            _glu,
             nn.Linear(inner_dim, inner_dim * 2),
-            SwiGLU(),
+            _glu,
             nn.Linear(inner_dim, dim),
             _dropout
         )
@@ -33,7 +39,7 @@ class LYNXNet2Block(nn.Module):
 
 class LYNXNet2(nn.Module):
     def __init__(self, in_dims, n_feats, *, num_layers=6, num_channels=512, expansion_factor=1, kernel_size=31,
-                 dropout=0.0):
+                 dropout_rate=0.0, use_conditioner_cache=False, glu_type='swiglu'):
         """
         LYNXNet2(Linear Gated Depthwise Separable Convolution Network Version 2)
         """
@@ -41,7 +47,12 @@ class LYNXNet2(nn.Module):
         self.in_dims = in_dims
         self.n_feats = n_feats
         self.input_projection = nn.Linear(in_dims * n_feats, num_channels)
-        self.conditioner_projection = nn.Linear(hparams['hidden_size'], num_channels)
+        self.use_conditioner_cache = use_conditioner_cache
+        if self.use_conditioner_cache:
+            # It may need to be modified at some point to be compatible with the condition cache
+            self.conditioner_projection = nn.Conv1d(hparams['hidden_size'], num_channels, 1)
+        else:
+            self.conditioner_projection = nn.Linear(hparams['hidden_size'], num_channels)
         self.diffusion_embedding = nn.Sequential(
             SinusoidalPosEmb(num_channels),
             nn.Linear(num_channels, num_channels * 4),
@@ -54,13 +65,14 @@ class LYNXNet2(nn.Module):
                     dim=num_channels,
                     expansion_factor=expansion_factor,
                     kernel_size=kernel_size,
-                    dropout=dropout
+                    dropout=dropout_rate,
+                    glu_type=glu_type
                 )
                 for i in range(num_layers)
             ]
         )
         self.norm = nn.LayerNorm(num_channels)
-        self.output_projection = nn.Linear(num_channels, in_dims * n_feats)
+        self.output_projection = AdamWLinear(num_channels, in_dims * n_feats)
         nn.init.kaiming_normal_(self.input_projection.weight)
         nn.init.kaiming_normal_(self.conditioner_projection.weight)
         nn.init.zeros_(self.output_projection.weight)
@@ -79,7 +91,11 @@ class LYNXNet2(nn.Module):
             x = spec.flatten(start_dim=1, end_dim=2)  # [B, F x M, T]
 
         x = self.input_projection(x.transpose(1, 2)) # [B, T, F x M]
-        x = x + self.conditioner_projection(cond.transpose(1, 2))
+        if self.use_conditioner_cache:
+            # It may need to be modified at some point to be compatible with the condition cache
+            x = x + self.conditioner_projection(cond).transpose(1, 2)
+        else:
+            x = x + self.conditioner_projection(cond.transpose(1, 2))
         x = x + self.diffusion_embedding(diffusion_step).unsqueeze(1)
 
         for layer in self.residual_layers:
