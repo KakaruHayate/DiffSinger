@@ -62,8 +62,8 @@ use_speed_embed: false
 
 diffusion_type: reflow
 reflow_type: x-pred
-use_ffl_loss: true
-ffl_weight: 0.0001
+use_ssim_loss: true
+ssim_weight: 0.01
 time_scale_factor: 1000
 timesteps: 1000
 max_beta: 0.02
@@ -86,6 +86,8 @@ backbone_args:
   dropout_rate: 0.0
   use_conditioner_cache: true
   glu_type: 'atanglu'
+  use_bottleneck_layer: true
+  bottleneck_dim: 128
 main_loss_type: l2
 main_loss_log_norm: false
 schedule_type: 'linear'

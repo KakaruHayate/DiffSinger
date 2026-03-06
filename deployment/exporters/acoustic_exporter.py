@@ -243,7 +243,7 @@ class DiffSingerAcousticExporter(BaseExporter):
             input_names=input_names,
             output_names=output_names,
             dynamic_axes=dynamix_axes,
-            opset_version=15
+            opset_version=17
         )
 
         condition = torch.rand((1, n_frames, hparams['hidden_size']), device=self.device)
@@ -319,7 +319,7 @@ class DiffSingerAcousticExporter(BaseExporter):
                     1: 'n_frames'
                 }
             },
-            opset_version=15
+            opset_version=17
         )
 
     @torch.no_grad()

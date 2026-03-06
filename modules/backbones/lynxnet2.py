@@ -39,14 +39,24 @@ class LYNXNet2Block(nn.Module):
 
 class LYNXNet2(nn.Module):
     def __init__(self, in_dims, n_feats, *, num_layers=6, num_channels=512, expansion_factor=1, kernel_size=31,
-                 dropout_rate=0.0, use_conditioner_cache=False, glu_type='swiglu'):
+                 dropout_rate=0.0, use_conditioner_cache=False, glu_type='swiglu', use_bottleneck_layer=False, bottleneck_dim=128):
         """
         LYNXNet2(Linear Gated Depthwise Separable Convolution Network Version 2)
         """
         super().__init__()
         self.in_dims = in_dims
         self.n_feats = n_feats
-        self.input_projection = nn.Linear(in_dims * n_feats, num_channels)
+        if use_bottleneck_layer:
+            self.input_projection = nn.Sequential(
+                nn.Linear(in_dims * n_feats, bottleneck_dim, bias=False),
+                nn.Linear(bottleneck_dim, num_channels)
+            )
+            nn.init.kaiming_normal_(self.input_projection[0].weight)
+            nn.init.kaiming_normal_(self.input_projection[1].weight)
+            nn.init.constant_(self.input_projection[1], 0)
+        else:
+            self.input_projection = nn.Linear(in_dims * n_feats, num_channels)
+            nn.init.kaiming_normal_(self.input_projection.weight)
         self.use_conditioner_cache = use_conditioner_cache
         if self.use_conditioner_cache:
             # It may need to be modified at some point to be compatible with the condition cache
@@ -73,7 +83,7 @@ class LYNXNet2(nn.Module):
         )
         self.norm = nn.LayerNorm(num_channels)
         self.output_projection = nn.Linear(num_channels, in_dims * n_feats)
-        nn.init.kaiming_normal_(self.input_projection.weight)
+        
         nn.init.kaiming_normal_(self.conditioner_projection.weight)
         nn.init.zeros_(self.output_projection.weight)
 

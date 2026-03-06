@@ -240,7 +240,7 @@ class DiffSingerVarianceExporter(BaseExporter):
                     **encoder_common_axes,
                     **({'languages': {1: 'n_tokens'}} if input_lang_id else {})
                 },
-                opset_version=15
+                opset_version=17
             )
 
             print(f'Exporting {self.dur_predictor_class_name}...')
@@ -275,7 +275,7 @@ class DiffSingerVarianceExporter(BaseExporter):
                     **({'spk_embed': {1: 'n_tokens'}} if input_spk_embed else {}),
                     **encoder_common_axes
                 },
-                opset_version=15
+                opset_version=17
             )
         else:
             torch.onnx.export(
@@ -302,7 +302,7 @@ class DiffSingerVarianceExporter(BaseExporter):
                     **encoder_common_axes,
                     **({'languages': {1: 'n_tokens'}} if input_lang_id else {})
                 },
-                opset_version=15
+                opset_version=17
             )
 
         # Common dummy inputs
@@ -380,7 +380,7 @@ class DiffSingerVarianceExporter(BaseExporter):
                     },
                     **({'spk_embed': {1: 'n_frames'}} if input_spk_embed else {})
                 },
-                opset_version=15
+                opset_version=17
             )
 
             # Prepare inputs for backbone tracing and pitch predictor scripting
@@ -439,7 +439,7 @@ class DiffSingerVarianceExporter(BaseExporter):
                         1: 'n_frames'
                     }
                 },
-                opset_version=15
+                opset_version=17
             )
 
             # Prepare inputs for postprocessor of the multi-variance predictor
@@ -468,7 +468,7 @@ class DiffSingerVarianceExporter(BaseExporter):
                         1: 'n_frames'
                     }
                 },
-                opset_version=15
+                opset_version=17
             )
 
         if self.model.predict_variances:
@@ -526,7 +526,7 @@ class DiffSingerVarianceExporter(BaseExporter):
                     },
                     **({'spk_embed': {1: 'n_frames'}} if input_spk_embed else {})
                 },
-                opset_version=15
+                opset_version=17
             )
 
             # Prepare inputs for backbone tracing and multi-variance predictor scripting
@@ -586,7 +586,7 @@ class DiffSingerVarianceExporter(BaseExporter):
                         (1 if len(self.model.variance_prediction_list) == 1 else 2): 'n_frames'
                     }
                 },
-                opset_version=15
+                opset_version=17
             )
 
             # Prepare inputs for postprocessor of the multi-variance predictor
@@ -618,7 +618,7 @@ class DiffSingerVarianceExporter(BaseExporter):
                         for v_name in self.model.variance_prediction_list
                     }
                 },
-                opset_version=15
+                opset_version=17
             )
 
     @torch.no_grad()

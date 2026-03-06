@@ -10,7 +10,7 @@ from basics.base_dataset import BaseDataset
 from basics.base_task import BaseTask
 from basics.base_vocoder import BaseVocoder
 from modules.aux_decoder import build_aux_loss
-from modules.losses import DiffusionLoss, RectifiedFlowLoss, MelFocalFrequencyLoss
+from modules.losses import DiffusionLoss, RectifiedFlowLoss, SSIMLoss
 from modules.toplevel import DiffSingerAcoustic, ShallowDiffusionOutput
 from modules.vocoders.registry import get_vocoder_cls
 from utils.hparams import hparams
@@ -114,8 +114,8 @@ class AcousticTask(BaseTask):
             )
             self.use_ffl_loss = hparams['reflow_type'] == 'x-pred' and hparams['use_ffl_loss']
             if self.use_ffl_loss:
-                self.ffl_loss = MelFocalFrequencyLoss(loss_weight=hparams['ffl_weight'], spec_min=hparams['mel_vmin'], spec_max=hparams['mel_vmax'])
-                self.register_validation_loss('ffl_loss')
+                self.ssim_loss = SSIMLoss(loss_weight=hparams['ssim_loss'])
+                self.register_validation_loss('ssim_loss')
         else:
             raise ValueError(f"Unknown diffusion type: {self.diffusion_type}")
         self.register_validation_loss('mel_loss')
@@ -166,9 +166,9 @@ class AcousticTask(BaseTask):
                 elif self.diffusion_type == 'reflow':
                     v_pred, v_gt, t = output.diff_out
                     mel_loss = self.mel_loss(v_pred, v_gt, t=t, non_padding=non_padding)
-                    if self.use_ffl_loss:
-                        ffl_loss = self.ffl_loss(v_pred, v_gt, non_padding=non_padding)
-                        losses['ffl_loss'] = ffl_loss
+                    if self.use_ssim_loss:
+                        ssim_loss = self.ssim_loss(v_pred, v_gt, non_padding=non_padding)
+                        losses['ssim_loss'] = ssim_loss
                 else:
                     raise ValueError(f"Unknown diffusion type: {self.diffusion_type}")
                 losses['mel_loss'] = mel_loss

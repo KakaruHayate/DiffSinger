@@ -73,8 +73,8 @@ augmentation_args:
 # diffusion and shallow diffusion
 diffusion_type: reflow
 reflow_type: x-pred
-use_ffl_loss: true
-ffl_weight: 0.0001
+use_ssim_loss: true
+ssim_weight: 0.01
 enc_ffn_kernel_size: 3
 use_rope: true
 rope_interleaved: false
@@ -94,6 +94,8 @@ backbone_args:
   dropout_rate: 0.0
   use_conditioner_cache: true
   glu_type: 'atanglu'
+  use_bottleneck_layer: true
+  bottleneck_dim: 128
 #backbone_type: 'wavenet'
 #backbone_args:
 #  num_channels: 512
