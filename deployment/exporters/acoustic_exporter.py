@@ -1,7 +1,6 @@
 import json
 from pathlib import Path
-from typing import List, Union, Tuple, Dict
-import warnings
+from typing import Union, List, Tuple, Dict
 
 import onnx
 import onnxsim
@@ -35,7 +34,6 @@ class DiffSingerAcousticExporter(BaseExporter):
         self.lang_map: dict = self.build_lang_map()
         self.phoneme_dictionary = load_phoneme_dictionary()
         self.use_lang_id = hparams.get('use_lang_id', False) and len(self.phoneme_dictionary.cross_lingual_phonemes) > 0
-        self.rope_interleaved = hparams.get('rope_interleaved', None)
         self.model = self.build_model()
         self.fs2_aux_cache_path = self.cache_dir / (
             'fs2_aux.onnx' if self.model.use_shallow_diffusion else 'fs2.onnx'
@@ -90,21 +88,8 @@ class DiffSingerAcousticExporter(BaseExporter):
                 for p in self.phoneme_dictionary.cross_lingual_phonemes
             })
         ).eval().to(self.device)
-        if self.rope_interleaved is None:
-            warnings.warn(
-                "After RoPE is refactored, the checkpoint no longer contains relevant parameters. "
-                "(https://github.com/openvpi/DiffSinger/pull/276)"
-                "In order to export ONNX with behavior compatible with past checkpoints, "
-                "it will be set to 'strict=False', which will no longer check the validity of the checkpoint. "
-                "Please understand what you are doing.",
-                UserWarning,
-                stacklevel=2
-            )
-            strict=False
-        else:
-            strict=True
         load_ckpt(model, hparams['work_dir'], ckpt_steps=self.ckpt_steps,
-                  prefix_in_ckpt='model', strict=strict, device=self.device)
+                  prefix_in_ckpt='model', strict=True, device=self.device)
         return model
 
     def export(self, path: Path):
@@ -144,7 +129,7 @@ class DiffSingerAcousticExporter(BaseExporter):
             'use_lang_id': self.use_lang_id,
             'acoustic': f'{model_name}.onnx',
             'hidden_size': hparams['hidden_size'],
-            'vocoder': 'nsf_hifigan_44.1k_hop512_128bin_2024.02',
+            'vocoder': 'pc_nsf_hifigan_44.1k_hop512_128bin_2025.02',
         }
         # multi-speaker
         if len(self.export_spk) > 0:
@@ -258,7 +243,7 @@ class DiffSingerAcousticExporter(BaseExporter):
             input_names=input_names,
             output_names=output_names,
             dynamic_axes=dynamix_axes,
-            opset_version=15
+            opset_version=17
         )
 
         condition = torch.rand((1, n_frames, hparams['hidden_size']), device=self.device)
@@ -334,7 +319,7 @@ class DiffSingerAcousticExporter(BaseExporter):
                     1: 'n_frames'
                 }
             },
-            opset_version=15
+            opset_version=17
         )
 
     @torch.no_grad()
@@ -354,8 +339,8 @@ class DiffSingerAcousticExporter(BaseExporter):
         spk_mix_value_N /= spk_mix_value_sum  # normalize
         spk_mix_embed = torch.sum(
             self.model.fs2.spk_embed(spk_mix_id_N) * spk_mix_value_N.unsqueeze(2),  # => [1, N, H]
-            dim=1, keepdim=False
-        )  # => [1, H]
+            dim=1, keepdim=True
+        )  # => [1, 1, H]
         return spk_mix_embed
 
     def _optimize_fs2_aux_graph(self, fs2: onnx.ModelProto) -> onnx.ModelProto:

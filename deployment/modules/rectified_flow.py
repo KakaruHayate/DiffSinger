@@ -5,7 +5,7 @@ from typing import List, Tuple
 import torch
 
 from modules.core import (
-    RectifiedFlow, PitchRectifiedFlow, MultiVarianceRectifiedFlow
+    RectifiedFlow, PitchRectifiedFlow, MultiVarianceRectifiedFlow, XPredRectifiedFlow
 )
 
 
@@ -120,4 +120,66 @@ class MultiVarianceRectifiedFlowONNX(RectifiedFlowONNX, MultiVarianceRectifiedFl
         m = (self.spec_max + self.spec_min) / 2.
         x = x * d + m
         x = x.mean(dim=-1)
+        return x
+
+
+class XPredRectifiedFlowONNX(XPredRectifiedFlow):
+    @property
+    def backbone(self):
+        return self.velocity_fn
+
+    @torch.jit.unused
+    def set_backbone(self, value):
+        self.velocity_fn = value
+
+    def sample_euler(self, x, t, dt: float, cond):
+        x_pred = self.velocity_fn(x, t * self.time_scale_factor, cond)
+        denom = torch.clamp(1.0 - t, min=1e-5).view(-1, 1, 1, 1)
+        v_pred = (x_pred - x) / denom
+        x += v_pred * dt
+        return x
+
+    def norm_spec(self, x):
+        k = (self.spec_max - self.spec_min) / 2.
+        b = (self.spec_max + self.spec_min) / 2.
+        return (x - b) / k
+
+    def denorm_spec(self, x):
+        k = (self.spec_max - self.spec_min) / 2.
+        b = (self.spec_max + self.spec_min) / 2.
+        return x * k + b
+
+    def forward(self, condition, x_end=None, depth=None, steps: int = 10):
+        condition = condition.transpose(1, 2)
+        device = condition.device
+        n_frames = condition.shape[2]
+        noise = torch.randn((1, self.num_feats, self.out_dims, n_frames), device=device)
+        
+        if x_end is None:
+            t_start = 0.
+            x = noise
+        else:
+            t_start = torch.max(1 - depth, torch.tensor(self.t_start, dtype=torch.float32, device=device))
+            x_end = self.norm_spec(x_end).transpose(-2, -1)
+            if self.num_feats == 1:
+                x_end = x_end[:, None, :, :]
+            if t_start <= 0.:
+                x = noise
+            elif t_start >= 1.:
+                x = x_end
+            else:
+                x = t_start * x_end + (1 - t_start) * noise
+
+        t_width = 1. - t_start
+        if t_width >= 0.:
+            dt = t_width / max(1, steps)
+            for t in torch.arange(steps, dtype=torch.long, device=device)[:, None].float() * dt + t_start:
+                x = self.sample_euler(x, t, dt, condition)
+
+        if self.num_feats == 1:
+            x = x.squeeze(1).permute(0, 2, 1) 
+        else:
+            x = x.permute(0, 1, 3, 2)
+            
+        x = self.denorm_spec(x)
         return x

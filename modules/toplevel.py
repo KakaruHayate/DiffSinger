@@ -15,7 +15,8 @@ from modules.commons.common_layers import (
 )
 from modules.core import (
     GaussianDiffusion, PitchDiffusion, MultiVarianceDiffusion,
-    RectifiedFlow, PitchRectifiedFlow, MultiVarianceRectifiedFlow
+    RectifiedFlow, PitchRectifiedFlow, MultiVarianceRectifiedFlow,
+    XPredRectifiedFlow
 )
 from modules.fastspeech.acoustic_encoder import FastSpeech2Acoustic
 from modules.fastspeech.param_adaptor import ParameterAdaptorModule
@@ -69,16 +70,31 @@ class DiffSingerAcoustic(CategorizedModule, ParameterAdaptorModule):
                 spec_max=hparams['spec_max']
             )
         elif self.diffusion_type == 'reflow':
-            self.diffusion = RectifiedFlow(
-                out_dims=out_dims,
-                num_feats=1,
-                t_start=hparams['T_start'],
-                time_scale_factor=hparams['time_scale_factor'],
-                backbone_type=self.backbone_type,
-                backbone_args=self.backbone_args,
-                spec_min=hparams['spec_min'],
-                spec_max=hparams['spec_max']
-            )
+            self.reflow_type = hparams.get('reflow_type', 'v-pred')
+            if self.reflow_type == 'v-pred':
+                self.diffusion = RectifiedFlow(
+                    out_dims=out_dims,
+                    num_feats=1,
+                    t_start=hparams['T_start'],
+                    time_scale_factor=hparams['time_scale_factor'],
+                    backbone_type=self.backbone_type,
+                    backbone_args=self.backbone_args,
+                    spec_min=hparams['spec_min'],
+                    spec_max=hparams['spec_max']
+                )
+            elif self.reflow_type == 'x-pred':
+                self.diffusion = XPredRectifiedFlow(
+                    out_dims=out_dims,
+                    num_feats=1,
+                    t_start=hparams['T_start'],
+                    time_scale_factor=hparams['time_scale_factor'],
+                    backbone_type=self.backbone_type,
+                    backbone_args=self.backbone_args,
+                    spec_min=hparams['spec_min'],
+                    spec_max=hparams['spec_max']
+                )
+            else:
+                raise NotImplementedError(self.reflow_type)
         else:
             raise NotImplementedError(self.diffusion_type)
 

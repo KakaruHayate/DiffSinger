@@ -51,6 +51,8 @@ use_lang_id: false
 num_lang: 1
 use_spk_id: false
 num_spk: 1
+use_mix_ln: false
+mix_ln_layer: [0, 2]
 use_energy_embed: false
 use_breathiness_embed: false
 use_voicing_embed: false
@@ -59,6 +61,9 @@ use_key_shift_embed: false
 use_speed_embed: false
 
 diffusion_type: reflow
+reflow_type: x-pred
+use_ssim_loss: true
+ssim_weight: 0.01
 time_scale_factor: 1000
 timesteps: 1000
 max_beta: 0.02

@@ -259,3 +259,94 @@ class MultiVarianceRectifiedFlow(RepetitiveRectifiedFlow):
             xs = xs.unbind(dim=1)
         assert len(xs) == self.num_feats
         return self.clamp_spec(xs)
+
+
+class XPredRectifiedFlow(nn.Module):
+    def __init__(self, out_dims, num_feats=1, t_start=0., time_scale_factor=1000,
+                 backbone_type=None, backbone_args=None,
+                 spec_min=None, spec_max=None):
+        super().__init__()
+        self.velocity_fn: nn.Module = build_backbone(out_dims, num_feats, backbone_type, backbone_args)
+        self.out_dims = out_dims
+        self.num_feats = num_feats
+        self.use_shallow_diffusion = hparams.get('use_shallow_diffusion', False)
+        if self.use_shallow_diffusion:
+            assert 0. <= t_start <= 1., 'T_start should be in [0, 1].'
+        else:
+            t_start = 0.
+        self.t_start = t_start
+        self.time_scale_factor = time_scale_factor
+
+        spec_min = torch.FloatTensor(spec_min)[None, None, :out_dims].transpose(-3, -2)
+        spec_max = torch.FloatTensor(spec_max)[None, None, :out_dims].transpose(-3, -2)
+        self.register_buffer('spec_min', spec_min, persistent=False)
+        self.register_buffer('spec_max', spec_max, persistent=False)
+
+    def p_losses(self, x_end, t, cond):
+        x_start = torch.randn_like(x_end)
+        x_t = x_start + t[:, None, None, None] * (x_end - x_start)
+        x_pred = self.velocity_fn(x_t, t * self.time_scale_factor, cond)
+        return x_pred, x_end
+
+    def forward(self, condition, gt_spec=None, src_spec=None, infer=True):
+        cond = condition.transpose(1, 2)
+        b, device = condition.shape[0], condition.device
+
+        if not infer:
+            spec = self.norm_spec(gt_spec).transpose(-2, -1)
+            if self.num_feats == 1:
+                spec = spec[:, None, :, :]
+            t = self.t_start + (1.0 - self.t_start) * torch.rand((b,), device=device)
+            x_pred, x_gt = self.p_losses(spec, t, cond=cond)
+            return x_pred, x_gt, t
+        else:
+            if src_spec is not None:
+                spec = self.norm_spec(src_spec).transpose(-2, -1)
+                if self.num_feats == 1:
+                    spec = spec[:, None, :, :]
+            else:
+                spec = None
+            x = self.inference(cond, b=b, x_end=spec, device=device)
+            return self.denorm_spec(x)
+
+    @torch.no_grad()
+    def sample_euler(self, x, t, dt, cond):
+        x_pred = self.velocity_fn(x, t * self.time_scale_factor, cond)
+        v_pred = (x_pred - x) / torch.clamp(1.0 - t, min=1e-5)
+        
+        x += v_pred * dt
+        t += dt
+        return x, t
+
+    @torch.no_grad()
+    def inference(self, cond, b=1, x_end=None, device=None):
+        noise = torch.randn(b, self.num_feats, self.out_dims, cond.shape[2], device=device)
+        t_start = hparams.get('T_start_infer', self.t_start)
+        if self.use_shallow_diffusion and t_start > 0:
+            assert x_end is not None, 'Missing shallow diffusion source.'
+            if t_start >= 1.:
+                t_start = 1.
+                x = x_end
+            else:
+                x = t_start * x_end + (1 - t_start) * noise
+        else:
+            t_start = 0.
+            x = noise
+
+        infer_step = hparams['sampling_steps']
+
+        if t_start < 1:
+            dt = (1.0 - t_start) / max(1, infer_step)
+            dts = torch.tensor([dt]).to(x)
+            for i in tqdm(range(infer_step), desc='sample time step', total=infer_step,
+                          disable=not hparams['infer'], leave=False):
+                x, _ = self.sample_euler(x, t_start + i * dts, dt, cond)
+            x = x.float()
+        x = x.transpose(2, 3).squeeze(1) 
+        return x
+
+    def norm_spec(self, x):
+        return (x - self.spec_min) / (self.spec_max - self.spec_min) * 2 - 1
+
+    def denorm_spec(self, x):
+        return (x + 1) / 2 * (self.spec_max - self.spec_min) + self.spec_min

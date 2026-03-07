@@ -1,7 +1,6 @@
 import json
 from pathlib import Path
 from typing import Union, List, Tuple, Dict
-import warnings
 
 import onnx
 import onnxsim
@@ -35,7 +34,6 @@ class DiffSingerVarianceExporter(BaseExporter):
         self.lang_map: dict = self.build_lang_map()
         self.phoneme_dictionary = load_phoneme_dictionary()
         self.use_lang_id = hparams.get('use_lang_id', False) and len(self.phoneme_dictionary.cross_lingual_phonemes) > 0
-        self.rope_interleaved = hparams.get('rope_interleaved', None)
         self.model = self.build_model()
         self.linguistic_encoder_cache_path = self.cache_dir / 'linguistic.onnx'
         self.dur_predictor_cache_path = self.cache_dir / 'dur.onnx'
@@ -92,19 +90,6 @@ class DiffSingerVarianceExporter(BaseExporter):
                 for p in self.phoneme_dictionary.cross_lingual_phonemes
             })
         ).eval().to(self.device)
-        if self.rope_interleaved is None:
-            warnings.warn(
-                "After RoPE is refactored, the checkpoint no longer contains relevant parameters. "
-                "(https://github.com/openvpi/DiffSinger/pull/276)"
-                "In order to export ONNX with behavior compatible with past checkpoints, "
-                "it will be set to 'strict=False', which will no longer check the validity of the checkpoint. "
-                "Please understand what you are doing.",
-                UserWarning,
-                stacklevel=2
-            )
-            strict=False
-        else:
-            strict=True
         load_ckpt(model, hparams['work_dir'], ckpt_steps=self.ckpt_steps,
                   prefix_in_ckpt='model', strict=True, device=self.device)
         model.build_smooth_op(self.device)
@@ -255,7 +240,7 @@ class DiffSingerVarianceExporter(BaseExporter):
                     **encoder_common_axes,
                     **({'languages': {1: 'n_tokens'}} if input_lang_id else {})
                 },
-                opset_version=15
+                opset_version=17
             )
 
             print(f'Exporting {self.dur_predictor_class_name}...')
@@ -290,7 +275,7 @@ class DiffSingerVarianceExporter(BaseExporter):
                     **({'spk_embed': {1: 'n_tokens'}} if input_spk_embed else {}),
                     **encoder_common_axes
                 },
-                opset_version=15
+                opset_version=17
             )
         else:
             torch.onnx.export(
@@ -317,7 +302,7 @@ class DiffSingerVarianceExporter(BaseExporter):
                     **encoder_common_axes,
                     **({'languages': {1: 'n_tokens'}} if input_lang_id else {})
                 },
-                opset_version=15
+                opset_version=17
             )
 
         # Common dummy inputs
@@ -395,7 +380,7 @@ class DiffSingerVarianceExporter(BaseExporter):
                     },
                     **({'spk_embed': {1: 'n_frames'}} if input_spk_embed else {})
                 },
-                opset_version=15
+                opset_version=17
             )
 
             # Prepare inputs for backbone tracing and pitch predictor scripting
@@ -454,7 +439,7 @@ class DiffSingerVarianceExporter(BaseExporter):
                         1: 'n_frames'
                     }
                 },
-                opset_version=15
+                opset_version=17
             )
 
             # Prepare inputs for postprocessor of the multi-variance predictor
@@ -483,7 +468,7 @@ class DiffSingerVarianceExporter(BaseExporter):
                         1: 'n_frames'
                     }
                 },
-                opset_version=15
+                opset_version=17
             )
 
         if self.model.predict_variances:
@@ -541,7 +526,7 @@ class DiffSingerVarianceExporter(BaseExporter):
                     },
                     **({'spk_embed': {1: 'n_frames'}} if input_spk_embed else {})
                 },
-                opset_version=15
+                opset_version=17
             )
 
             # Prepare inputs for backbone tracing and multi-variance predictor scripting
@@ -601,7 +586,7 @@ class DiffSingerVarianceExporter(BaseExporter):
                         (1 if len(self.model.variance_prediction_list) == 1 else 2): 'n_frames'
                     }
                 },
-                opset_version=15
+                opset_version=17
             )
 
             # Prepare inputs for postprocessor of the multi-variance predictor
@@ -633,7 +618,7 @@ class DiffSingerVarianceExporter(BaseExporter):
                         for v_name in self.model.variance_prediction_list
                     }
                 },
-                opset_version=15
+                opset_version=17
             )
 
     @torch.no_grad()
@@ -653,8 +638,8 @@ class DiffSingerVarianceExporter(BaseExporter):
         spk_mix_value_N /= spk_mix_value_sum  # normalize
         spk_mix_embed = torch.sum(
             self.model.spk_embed(spk_mix_id_N) * spk_mix_value_N.unsqueeze(2),  # => [1, N, H]
-            dim=1, keepdim=False
-        )  # => [1, H]
+            dim=1, keepdim=True
+        )  # => [1, 1, H]
         return spk_mix_embed
 
     def _optimize_linguistic_graph(self, linguistic: onnx.ModelProto) -> onnx.ModelProto:

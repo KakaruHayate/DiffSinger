@@ -116,7 +116,7 @@ class NSFHiFiGANExporter(BaseExporter):
                     1: 'n_samples'
                 }
             },
-            opset_version=15
+            opset_version=17
         )
 
     def _optimize_model_graph(self, model: onnx.ModelProto) -> onnx.ModelProto:
