@@ -45,7 +45,8 @@ class FastSpeech2Acoustic(nn.Module):
             dropout=hparams['dropout'], num_heads=hparams['num_heads'],
             use_pos_embed=hparams['use_pos_embed'], rel_pos=hparams.get('rel_pos', False), 
             use_rope=hparams.get('use_rope', False), rope_interleaved=hparams.get('rope_interleaved', True), 
-            mix_ln_layer=self.mix_ln_layer
+            mix_ln_layer=self.mix_ln_layer, rope_theta=hparams.get('rope_theta', None),
+            rotary_dim=hparams.get('rotary_dim', None), 
         )
 
         self.pitch_embed = AdamWLinear(1, hparams['hidden_size'])

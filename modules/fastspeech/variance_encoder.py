@@ -33,8 +33,9 @@ class FastSpeech2Variance(nn.Module):
             hidden_size=hparams['hidden_size'], num_layers=hparams['enc_layers'],
             ffn_kernel_size=hparams['enc_ffn_kernel_size'], ffn_act=hparams['ffn_act'],
             dropout=hparams['dropout'], num_heads=hparams['num_heads'],
-            use_pos_embed=hparams['use_pos_embed'], rel_pos=hparams.get('rel_pos', False), 
-            use_rope=hparams.get('use_rope', False), rope_interleaved=hparams.get('rope_interleaved', True)
+            use_pos_embed=hparams['use_pos_embed'], rel_pos=hparams.get('rel_pos', False),
+            use_rope=hparams.get('use_rope', False), rope_interleaved=hparams.get('rope_interleaved', True),
+            rope_theta=hparams.get('rope_theta', None), rotary_dim=hparams.get('rotary_dim', None),
         )
 
         dur_hparams = hparams['dur_prediction_args']
