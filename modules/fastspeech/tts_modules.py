@@ -265,7 +265,7 @@ class DurationPredictor(torch.nn.Module):
                     reverse=True, 
                     noise_scale=0.8
                 )
-                sdp_pred = self.out2dur(logw_sdp.transpose(1, -1) * non_pad_mask_2d)
+                sdp_pred = torch.ceil(self.out2dur(logw_sdp.transpose(1, -1) * non_pad_mask_2d))
 
                 # Interpolate between SDP output and DP output
                 dur_pred = (sdp_pred * self.sdp_ratio) + (dur_pred * (1.0 - self.sdp_ratio))
