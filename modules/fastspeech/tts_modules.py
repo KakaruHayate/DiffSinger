@@ -253,7 +253,7 @@ class DurationPredictor(torch.nn.Module):
                     reverse=True, 
                     noise_scale=1.0
                 )
-                sdp_pred = self.out2dur(logw_sdp.transpose(1, -1) * non_pad_mask_2d)
+                sdp_pred = torch.ceil(self.out2dur(logw_sdp.transpose(1, -1) * non_pad_mask_2d))
 
             else:
                 # Inference Phase:
