@@ -230,8 +230,13 @@ class VarianceTask(BaseTask):
             if dur_pred is not None:
                 losses['dur_loss'] = self.lambda_dur_loss * self.dur_loss(dur_pred, ph_dur, ph2word=ph2word)
                 if self.use_sdp:
-                    losses['dur_sdp_loss'] = self.dur_sdp_loss(sdp_pred, ph_dur, ph2word=ph2word)
                     losses['sdp_flow_loss'] = self.sdp_flow_loss(sdp_loss)
+                    lambda_sdp_reg_base = hparams.get('lambda_sdp_reg_loss', 0.1)
+                    warmup_steps = hparams.get('sdp_reg_warmup_steps', 20000)
+                    step = getattr(self, 'global_step', 1)
+                    anneal_weight = min(1.0, step / warmup_steps) if warmup_steps > 0 else 1.0
+                    current_sdp_reg_weight = lambda_sdp_reg_base * anneal_weight
+                    losses['dur_sdp_loss'] = current_sdp_reg_weight * self.dur_sdp_loss(sdp_pred, ph_dur, ph2word=ph2word)
             non_padding = (mel2ph > 0).unsqueeze(-1) if mel2ph is not None else None
             if pitch_pred is not None:
                 if self.diffusion_type == 'ddpm':
