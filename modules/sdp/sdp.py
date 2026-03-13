@@ -240,7 +240,8 @@ class StochasticDurationPredictor(nn.Module):
             assert w is not None
 
             logdet_tot_q = 0
-            h_w = self.post_pre(w)
+            # h_w = self.post_pre(w)
+            h_w = self.post_pre(torch.log(w + 1.0))
             h_w = self.post_convs(h_w, x_mask)
             h_w = self.post_proj(h_w) * x_mask
             e_q = (

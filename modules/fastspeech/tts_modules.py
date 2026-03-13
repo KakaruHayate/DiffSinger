@@ -56,32 +56,64 @@ class LayerNorm(torch.nn.LayerNorm):
 
 
 class DurationPredictor(torch.nn.Module):
-    """Duration predictor module.
-    This is a module of duration predictor described in `FastSpeech: Fast, Robust and Controllable Text to Speech`_.
-    The duration predictor predicts a duration of each frame in log domain from the hidden embeddings of encoder.
-    .. _`FastSpeech: Fast, Robust and Controllable Text to Speech`:
+    """
+    Duration predictor module.
+    
+    This module predicts the duration of each phoneme frame. It combines a deterministic 
+    Duration Predictor (based on FastSpeech/ResNet) and an optional Stochastic Duration Predictor 
+    (SDP, based on Normalizing Flows like VITS/Bert-VITS2) to improve generation variance.
+    
+    Reference: 
+        `FastSpeech: Fast, Robust and Controllable Text to Speech`
         https://arxiv.org/pdf/1905.09263.pdf
+        
     Note:
-        The calculation domain of outputs is different between in `forward` and in `inference`. In `forward`,
-        the outputs are calculated in log domain but in `inference`, those are calculated in linear domain.
+        - During `forward` (training), outputs are typically calculated and supervised in the log domain.
+        - During `inference`, outputs are converted back to the linear domain.
     """
 
-    def __init__(self, in_dims, n_layers=2, n_chans=384, kernel_size=3,
-                 dropout_rate=0.1, offset=1.0, dur_loss_type='mse', arch='resnet', use_sdp=False, sdp_ratio=0.2, sdp_n_chans=192, gin_channels=0):
-        """Initialize duration predictor module.
+    def __init__(
+        self, 
+        in_dims, 
+        n_layers=2, 
+        n_chans=384, 
+        kernel_size=3,
+        dropout_rate=0.1, 
+        offset=1.0, 
+        dur_loss_type='mse', 
+        arch='resnet',
+        use_sdp=False, 
+        sdp_ratio=0.2, 
+        sdp_n_chans=192, 
+        gin_channels=0
+    ):
+        """
+        Initialize the Duration Predictor module.
+
         Args:
-            in_dims (int): Input dimension.
+            in_dims (int): Input dimension from the text/phoneme encoder.
             n_layers (int, optional): Number of convolutional layers.
-            n_chans (int, optional): Number of channels of convolutional layers.
-            kernel_size (int, optional): Kernel size of convolutional layers.
+            n_chans (int, optional): Number of channels for convolutional layers.
+            kernel_size (int, optional): Kernel size for convolutional layers.
             dropout_rate (float, optional): Dropout rate.
-            offset (float, optional): Offset value to avoid nan in log domain.
+            offset (float, optional): Offset value added before log transform to avoid log(0).
+            dur_loss_type (str, optional): Loss type ('mse', 'huber', etc.).
+            arch (str, optional): Architecture type ('resnet' or standard CNN).
+            use_sdp (bool, optional): Whether to use Stochastic Duration Predictor.
+            sdp_ratio (float, optional): Interpolation ratio between SDP and DP outputs during inference.
+            sdp_n_chans (int, optional): Hidden channels for SDP.
+            gin_channels (int, optional): Speaker embedding channels for conditioning.
         """
         super(DurationPredictor, self).__init__()
         self.offset = offset
-        self.conv = torch.nn.ModuleList()
+        self.loss_type = dur_loss_type
         self.kernel_size = kernel_size
         self.use_resnet = (arch == 'resnet')
+
+        # --------------------------------------------------
+        # Deterministic Duration Predictor (DP) Setup
+        # --------------------------------------------------
+        self.conv = nn.ModuleList()
         for idx in range(n_layers):
             in_chans = in_dims if idx == 0 else n_chans
             if self.use_resnet:
@@ -94,93 +126,154 @@ class DurationPredictor(torch.nn.Module):
                 ))
             else:
                 self.conv.append(nn.Sequential(
-                    nn.Identity(),  # this is a placeholder for ConstantPad1d which is now merged into Conv1d
+                    nn.Identity(),  # Placeholder for old ConstantPad1d (merged into Conv1d)
                     nn.Conv1d(in_chans, n_chans, kernel_size, stride=1, padding=kernel_size // 2),
                     nn.ReLU(),
                     LayerNorm(n_chans, dim=1),
                     nn.Dropout(dropout_rate)
                 ))
+
         if self.use_resnet and in_dims != n_chans:
             self.res_conv = nn.Conv1d(in_dims, n_chans, 1)
         else:
             self.res_conv = None
-        self.loss_type = dur_loss_type
+
         if self.loss_type in ['mse', 'huber']:
             self.out_dims = 1
-        # elif hparams['dur_loss_type'] == 'mog':
-        #     out_dims = 15
-        # elif hparams['dur_loss_type'] == 'crf':
-        #     out_dims = 32
-        #     from torchcrf import CRF
-        #     self.crf = CRF(out_dims, batch_first=True)
         else:
-            raise NotImplementedError()
-        self.linear = torch.nn.Linear(n_chans, self.out_dims)
+            raise NotImplementedError(f"Unsupported dur_loss_type: {self.loss_type}")
+
+        self.linear = nn.Linear(n_chans, self.out_dims)
+
+        # --------------------------------------------------
+        # Stochastic Duration Predictor (SDP) Setup
+        # --------------------------------------------------
         self.use_sdp = use_sdp
         self.sdp_ratio = sdp_ratio
+        
         if self.use_sdp:
-            self.sdp = StochasticDurationPredictor(in_dims, sdp_n_chans, 3, 0.5, 4, gin_channels=gin_channels)
+            self.sdp = StochasticDurationPredictor(
+                in_channels=in_dims, 
+                filter_channels=sdp_n_chans, 
+                kernel_size=3, 
+                p_dropout=0.5, 
+                n_flows=4, 
+                gin_channels=gin_channels
+            )
+        else:
+            self.sdp = None
 
     def out2dur(self, xs):
+        """
+        Convert the model's log-domain prediction back to linear duration.
+        
+        Args:
+            xs (Tensor): Log-domain predicted duration [B, Tmax, 1] or [B, Tmax]
+        Returns:
+            Tensor: Linear duration [B, Tmax]
+        """
         if self.loss_type in ['mse', 'huber']:
-            # NOTE: calculate loss in log domain
-            dur = xs.squeeze(-1).exp() - self.offset  # (B, Tmax)
-        # elif hparams['dur_loss_type'] == 'crf':
-        #     dur = torch.LongTensor(self.crf.decode(xs)).cuda()
+            # Apply exponentiation and subtract the offset used during log mapping
+            dur = xs.squeeze(-1).exp() - self.offset  # [B, Tmax]
         else:
             raise NotImplementedError()
         return dur
 
     def forward(self, xs, x_masks=None, infer=True, ph_dur=None, sdp_cond=None, spk_embed=None):
-        """Calculate forward propagation.
-        Args:
-            xs (Tensor): Batch of input sequences (B, Tmax, idim).
-            x_masks (BoolTensor, optional): Batch of masks indicating padded part (B, Tmax).
-            infer (bool): Whether inference
-        Returns:
-            (train) FloatTensor, (infer) LongTensor: Batch of predicted durations in linear domain (B, Tmax).
         """
-        xs = xs.transpose(1, -1)  # (B, idim, Tmax)
-        sdp_cond = sdp_cond.transpose(1, -1)  # (B, idim, Tmax)
-        masks = 1 - x_masks.float()
-        masks_ = masks[:, None, :]
-        if spk_embed is not None:
-            g = spk_embed.transpose(1, -1)
-        else:
-            g = None
-        if self.use_sdp:
-            if not infer:
-                noise_scale = 1
-            else:
-                noise_scale = 0.8
-            xs_spd = self.sdp(sdp_cond, masks_, ph_dur, g=g, reverse=infer, noise_scale=noise_scale)
+        Calculate forward propagation for both DP and optional SDP.
+
+        Args:
+            xs (Tensor): Batch of input sequences [B, Tmax, idim].
+            x_masks (BoolTensor, optional): Batch of padding masks, True indicates padded [B, Tmax].
+            infer (bool): Whether in inference mode.
+            ph_dur (Tensor, optional): Ground truth phoneme duration [B, Tmax]. Needed for SDP training.
+            sdp_cond (Tensor, optional): Conditioning sequence for SDP [B, Tmax, idim].
+            spk_embed (Tensor, optional): Speaker embedding [B, gin_channels].
+
+        Returns:
+            tuple:
+                - dur_pred (Tensor): Final predicted linear durations [B, Tmax].
+                - loss_sdp (Tensor or int): SDP negative log-likelihood flow loss (0 if not using SDP or inferring).
+                - sdp_pred (Tensor or None): SDP reverse prediction for MSE regression computing.
+        """
+        # Prepare Masks: 
+        # x_masks is True for padding. non_pad_mask is 1 for valid frames, 0 for padding.
+        non_pad_mask = 1.0 - x_masks.float()         # [B, Tmax]
+        non_pad_mask_1d = non_pad_mask.unsqueeze(1)  # [B, 1, Tmax]
+        non_pad_mask_2d = non_pad_mask.unsqueeze(2)  # [B, Tmax, 1]
+
+        # Prepare global conditioning (speaker embedding)
+        g = spk_embed.transpose(1, -1) if spk_embed is not None else None  # [B, gin_chans, 1]
+
+        dp_xs = xs.transpose(1, -1)  # [B, Tmax, idim] -> [B, idim, Tmax]
+        
         for idx, f in enumerate(self.conv):
             if self.use_resnet:
-                residual = self.res_conv(xs) if idx == 0 and self.res_conv is not None else xs
-                xs = residual + f(xs)
+                residual = self.res_conv(dp_xs) if (idx == 0 and self.res_conv is not None) else dp_xs
+                dp_xs = residual + f(dp_xs)
             else:
-                xs = f(xs)
+                dp_xs = f(dp_xs)
+                
             if x_masks is not None:
-                xs = xs * masks_
-        xs = self.linear(xs.transpose(1, -1))  # [B, T, C]
-        xs = xs * masks[:, :, None]  # (B, T, C)
+                dp_xs = dp_xs * non_pad_mask_1d
 
-        dur_pred = self.out2dur(xs)
-        if infer:
-            dur_pred = dur_pred #   # avoid negative value
-            if self.use_sdp:
-                sdp_pred = self.out2dur(xs_spd.transpose(1, -1) * masks[:, :, None])
-                dur_pred = sdp_pred * self.sdp_ratio + dur_pred * (1 - self.sdp_ratio)
-            return dur_pred.clamp(min=0.), None, None
-        else:
-            if self.use_sdp:
-                sdp_pred = self.sdp(sdp_cond, masks_, g=g, reverse=True, noise_scale=1.0)
-                sdp_pred = self.out2dur(sdp_pred.transpose(1, -1) * masks[:, :, None])
-                l_length_sdp = xs_spd / torch.sum(masks_)
+        dp_xs = self.linear(dp_xs.transpose(1, -1))  # [B, idim, Tmax] -> [B, Tmax, C]
+        dp_xs = dp_xs * non_pad_mask_2d              # Mask padded areas [B, Tmax, C]
+        
+        dur_pred = self.out2dur(dp_xs)               # Convert to linear domain [B, Tmax]
+
+        loss_sdp = 0.0
+        sdp_pred = None
+
+        if self.use_sdp and sdp_cond is not None:
+            sdp_cond_t = sdp_cond.transpose(1, -1)   # [B, idim, Tmax]
+
+            if not infer:
+                # Training Phase:
+                # Calculate NLL Flow Loss (Forward pass)
+                nll_loss = self.sdp(
+                    x=sdp_cond_t, 
+                    x_mask=non_pad_mask_1d, 
+                    w=ph_dur, 
+                    g=g, 
+                    reverse=False, 
+                    noise_scale=1.0
+                )
+                
+                # Average NLL over non-padded sequence lengths
+                l_length_sdp = nll_loss / torch.sum(non_pad_mask_1d)
                 loss_sdp = torch.sum(l_length_sdp.float())
+
+                # Generate duration using SDP (Reverse pass) for Bert-VITS2 style mixed regression loss
+                logw_sdp = self.sdp(
+                    x=sdp_cond_t, 
+                    x_mask=non_pad_mask_1d, 
+                    g=g, 
+                    reverse=True, 
+                    noise_scale=1.0
+                )
+                sdp_pred = self.out2dur(logw_sdp.transpose(1, -1) * non_pad_mask_2d)
+
             else:
-                loss_sdp = 0
-                sdp_pred = None
+                # Inference Phase:
+                # Generate duration using SDP with reduced noise scale for stability
+                logw_sdp = self.sdp(
+                    x=sdp_cond_t, 
+                    x_mask=non_pad_mask_1d, 
+                    g=g, 
+                    reverse=True, 
+                    noise_scale=0.8
+                )
+                sdp_pred = self.out2dur(logw_sdp.transpose(1, -1) * non_pad_mask_2d)
+
+                # Interpolate between SDP output and DP output
+                dur_pred = (sdp_pred * self.sdp_ratio) + (dur_pred * (1.0 - self.sdp_ratio))
+
+        if infer:
+            # Clamp negative values effectively avoiding crashing length regulators downstream
+            return dur_pred.clamp(min=0.0), None, None
+        else:
             return dur_pred, loss_sdp, sdp_pred
 
 
