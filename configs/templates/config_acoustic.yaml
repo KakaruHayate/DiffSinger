@@ -73,7 +73,7 @@ augmentation_args:
 # diffusion and shallow diffusion
 diffusion_type: reflow
 reflow_type: x-pred
-use_ssim_loss: false
+use_ssim_loss: true
 ssim_weight: 0.01
 enc_ffn_kernel_size: 3
 use_rope: true
@@ -112,7 +112,7 @@ shallow_diffusion_args:
     kernel_size: 7
     dropout_rate: 0.1
   aux_decoder_grad: 0.1
-lambda_aux_mel_loss: 0.2
+lambda_aux_mel_loss: 0.02
 
 optimizer_args:
   optimizer_cls: modules.optimizer.muon.Muon_AdamW
