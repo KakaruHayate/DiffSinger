@@ -114,7 +114,7 @@ class AcousticTask(BaseTask):
             )
             self.use_ssim_loss = hparams['reflow_type'] == 'x-pred' and hparams['use_ssim_loss']
             if self.use_ssim_loss:
-                self.ssim_loss = SSIMLoss(loss_weight=hparams['ssim_loss'])
+                self.ssim_loss = SSIMLoss(loss_weight=hparams['ssim_weight'])
                 self.register_validation_loss('ssim_loss')
         else:
             raise ValueError(f"Unknown diffusion type: {self.diffusion_type}")
