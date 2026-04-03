@@ -70,10 +70,12 @@ def zeropower_via_newtonschulz5(G: Tensor, steps: int, use_bf16: bool, ns_coeffi
     """
     assert G.ndim == 3 # batched Muon implementation by @scottjmaddox, and put into practice in the record by @YouJiacheng
     
-    X = G.to(dtype = torch.bfloat16 if use_bf16 else torch.float32)
+    # X = G.to(dtype = torch.bfloat16 if use_bf16 else torch.float32)
+    X = G.to(torch.float32)
 
     # Ensure spectral norm is at most 1
     X = F.normalize(X, p=2.0, dim=(-2, -1), eps=1e-7)
+    X = X.to(torch.float16)
     
     # Perform the NS iterations
     if X.size(-2) < X.size(-1):
@@ -137,7 +139,8 @@ def gram_newton_schulz(G: Tensor, steps: int, use_bf16: bool, reset_iterations: 
         X = torch.bmm(Q, X) if not should_transpose else torch.bmm(X.mT, Q)
             
     else:
-        X = X.to(dtype = torch.bfloat16 if use_bf16 else torch.float32)
+        # X = X.to(dtype = torch.bfloat16 if use_bf16 else torch.float32)
+        X = X.to(torch.float16)
         for i, (a_i, b_i, c_i) in enumerate(ns_coefficients):
             A = torch.bmm(X, X.mT)
             B = torch.baddbmm(A, A, A, beta=b_i, alpha=c_i)

@@ -130,7 +130,7 @@ class MelodyEncoder(nn.Module):
             dropout=get_hparam('dropout'), num_heads=get_hparam('num_heads'),
             use_pos_embed=get_hparam('use_pos_embed'), rel_pos=get_hparam('rel_pos'),
             use_rope=get_hparam('use_rope'), rope_interleaved=hparams.get('rope_interleaved', True),
-            rope_theta=hparams.get('rope_theta', 10000),
+            rope_theta=hparams.get('rope_theta', 10000), rotary_dim=hparams.get('me_rotary_dim', None),
         )
         self.out_proj = Linear(hidden_size, hparams['hidden_size'])
 
