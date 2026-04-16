@@ -3,6 +3,7 @@ from modules.backbones.wavenet import WaveNet
 from modules.backbones.lynxnet import LYNXNet
 from modules.backbones.lynxnet2 import LYNXNet2
 from modules.backbones.lynxnet2attn import LYNXNet2Attn
+from modules.backbones.lynxnet2plus import LYNXNet2Plus
 from utils import filter_kwargs
 
 BACKBONES = {
@@ -10,6 +11,7 @@ BACKBONES = {
     'lynxnet': LYNXNet,
     'lynxnet2': LYNXNet2,
     'lynxnet2attn': LYNXNet2Attn,
+    'lynxnet2plus': LYNXNet2Plus,
 }
 
 
