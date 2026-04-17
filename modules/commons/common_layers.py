@@ -175,6 +175,24 @@ class ATanGLU(nn.Module):
             return out * torch.atan(gate)
         
         
+class xATanGLU(nn.Module):
+    # xArcTan Gated Linear Unit (ArXiv: 2405.20768)
+    def __init__(self, dim: int = -1, alpha_init: float = 0.0):
+        super().__init__()
+        self.dim = dim
+        self.alpha = nn.Parameter(torch.tensor(alpha_init, dtype=torch.float32))
+
+    def forward(self, x):
+        # out, gate = x.chunk(2, dim=self.dim)
+        # Using torch.split instead of chunk for ONNX export compatibility.
+        out, gate = torch.split(x, x.size(self.dim) // 2, dim=self.dim)
+        atan_gate = torch.atan(gate)
+        base_gate = (atan_gate + (torch.pi / 2)) / torch.pi
+        k = 1 + (2 * self.alpha)
+        scaled_gate = base_gate * k - self.alpha
+        return out * scaled_gate
+        
+        
 class AdamWCov1d(torch.nn.Conv1d):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -215,6 +233,9 @@ class TransformerFFNLayer(nn.Module):
             filter_size_1 = filter_size * 2
         elif self.act == 'atanglu':
             self.act_fn = ATanGLU()
+            filter_size_1 = filter_size * 2
+        elif self.act == 'xatanglu':
+            self.act_fn = xATanGLU()
             filter_size_1 = filter_size * 2
         else:
             raise ValueError(f'{act} is not a valid activation')
