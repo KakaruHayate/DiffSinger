@@ -144,6 +144,22 @@ class SwiGLU(nn.Module):
         return out * gate
 
 
+class ClampedSwiGLU(nn.Module):
+    # Clamped Swish-Applies the gated linear unit function.
+    def __init__(self, dim=-1, limit=10):
+        super().__init__()
+        self.dim = dim
+        self.limit = limit
+
+    def forward(self, x):
+        # out, gate = x.chunk(2, dim=self.dim)
+        # Using torch.split instead of chunk for ONNX export compatibility.
+        gate, out = torch.split(x, x.size(self.dim) // 2, dim=self.dim)
+        gate_clamped = torch.clamp(gate, min=-self.limit, max=self.limit)
+        up_clamped = torch.clamp(up, min=-self.limit, max=self.limit)
+        return F.silu(gate_clamped) * up_clamped
+
+
 class ATanGLUFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, out, gate):
@@ -216,6 +232,9 @@ class TransformerFFNLayer(nn.Module):
             filter_size_1 = filter_size * 2
         elif self.act == 'atanglu':
             self.act_fn = ATanGLU()
+            filter_size_1 = filter_size * 2
+        elif self.act == 'clamped_swiglu':
+            self.act_fn = ClampedSwiGLU()
             filter_size_1 = filter_size * 2
         else:
             raise ValueError(f'{act} is not a valid activation')
