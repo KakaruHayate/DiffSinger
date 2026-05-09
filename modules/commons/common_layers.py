@@ -156,8 +156,8 @@ class ClampedSwiGLU(nn.Module):
         # Using torch.split instead of chunk for ONNX export compatibility.
         gate, out = torch.split(x, x.size(self.dim) // 2, dim=self.dim)
         gate_clamped = torch.clamp(gate, min=-self.limit, max=self.limit)
-        up_clamped = torch.clamp(up, min=-self.limit, max=self.limit)
-        return F.silu(gate_clamped) * up_clamped
+        out_clamped = torch.clamp(out, min=-self.limit, max=self.limit)
+        return F.silu(gate_clamped) * out_clamped
 
 
 class ATanGLUFunction(torch.autograd.Function):
@@ -275,10 +275,10 @@ class MultiheadSelfAttentionWithRoPE(nn.Module):
         
         # Initialization parameters
         nn.init.xavier_uniform_(self.in_proj.weight)
-        nn.init.xavier_uniform_(self.out_proj.weight)
+        # nn.init.xavier_uniform_(self.out_proj.weight)
         if bias:
             nn.init.constant_(self.in_proj.bias, 0.0)
-            nn.init.constant_(self.out_proj.bias, 0.0)
+            # nn.init.constant_(self.out_proj.bias, 0.0)
         
     def forward(self, x, key_padding_mask=None):
         # x: (B, L, C)

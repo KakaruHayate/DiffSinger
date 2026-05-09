@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from torch import Tensor
 from torch.nn import Module, Parameter, Embedding
 from typing import List
+from itertools import repeat
 from .chained_optimizer import ChainedOptimizer, OptimizerSpec
 
 from modules.commons.common_layers import AdamWLinear, AdamWConv1d
