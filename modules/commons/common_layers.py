@@ -155,9 +155,10 @@ class ClampedSwiGLU(nn.Module):
         # out, gate = x.chunk(2, dim=self.dim)
         # Using torch.split instead of chunk for ONNX export compatibility.
         gate, out = torch.split(x, x.size(self.dim) // 2, dim=self.dim)
-        gate_clamped = torch.clamp(gate, min=-self.limit, max=self.limit)
-        out_clamped = torch.clamp(out, min=-self.limit, max=self.limit)
-        return F.silu(gate_clamped) * out_clamped
+        if self.training:
+            gate = torch.clamp(gate, max=self.limit)
+            out = torch.clamp(out, min=-self.limit, max=self.limit)
+        return F.silu(gate) * out
 
 
 class ATanGLUFunction(torch.autograd.Function):
