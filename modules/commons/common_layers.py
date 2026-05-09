@@ -8,6 +8,7 @@ import torch.onnx.operators
 from torch import nn
 from torch.nn import LayerNorm, MultiheadAttention, ReLU, GELU, SiLU
 
+from modules.autofp8linear import AutoFP8Linear
 import utils
 
 
@@ -175,7 +176,7 @@ class ATanGLU(nn.Module):
             return out * torch.atan(gate)
         
         
-class AdamWCov1d(torch.nn.Conv1d):
+class AdamWConv1d(torch.nn.Conv1d):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         nn.init.kaiming_normal_(self.weight)
@@ -219,7 +220,7 @@ class TransformerFFNLayer(nn.Module):
         else:
             raise ValueError(f'{act} is not a valid activation')
         self.ffn_1 = nn.Conv1d(hidden_size, filter_size_1, kernel_size, padding=kernel_size // 2)
-        self.ffn_2 = XavierUniformInitLinear(filter_size, hidden_size)
+        self.ffn_2 = AutoFP8Linear(filter_size, hidden_size)
 
     def forward(self, x):
         # x: B x T x C
@@ -245,7 +246,7 @@ class MultiheadSelfAttentionWithRoPE(nn.Module):
         self.in_proj = nn.Linear(embed_dim, embed_dim * 3, bias=bias)
         
         # Final linear layer after concatenation
-        self.out_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
+        self.out_proj = AutoFP8Linear(embed_dim, embed_dim, bias=bias)
         
         # Dropout layer
         self.dropout = nn.Dropout(dropout)

@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from modules.commons.common_layers import SinusoidalPosEmb, SwiGLU, ATanGLU, Transpose, AdamWLinear
+from modules.autofp8linear import AutoFP8Linear
 from utils.hparams import hparams
 
 
@@ -25,11 +26,11 @@ class LYNXNet2Block(nn.Module):
             Transpose((1, 2)),
             nn.Conv1d(dim, dim, kernel_size=kernel_size, padding=kernel_size // 2, groups=dim),
             Transpose((1, 2)),
-            nn.Linear(dim, inner_dim * 2),
+            AutoFP8Linear(dim, inner_dim * 2),
             _glu,
-            nn.Linear(inner_dim, inner_dim * 2),
+            AutoFP8Linear(inner_dim, inner_dim * 2),
             _glu,
-            nn.Linear(inner_dim, dim),
+            AutoFP8Linear(inner_dim, dim),
             _dropout
         )
 

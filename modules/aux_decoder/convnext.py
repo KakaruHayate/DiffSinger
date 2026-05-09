@@ -3,7 +3,8 @@ from typing import Optional
 import torch
 import torch.nn as nn
 
-from modules.commons.common_layers import AdamWCov1d
+from modules.commons.common_layers import AdamWConv1d
+from modules.autofp8linear import AutoFP8Linear
 
 
 class ConvNeXtBlock(nn.Module):
@@ -27,9 +28,9 @@ class ConvNeXtBlock(nn.Module):
         self.dwconv = nn.Conv1d(dim, dim, kernel_size=7, padding=3, groups=dim)  # depthwise conv
 
         self.norm = nn.LayerNorm(dim, eps=1e-6)
-        self.pwconv1 = nn.Linear(dim, intermediate_dim)  # pointwise/1x1 convs, implemented with linear layers
+        self.pwconv1 = AutoFP8Linear(dim, intermediate_dim)  # pointwise/1x1 convs, implemented with linear layers
         self.act = nn.GELU()
-        self.pwconv2 = nn.Linear(intermediate_dim, dim)
+        self.pwconv2 = AutoFP8Linear(intermediate_dim, dim)
         self.gamma = (
             nn.Parameter(layer_scale_init_value * torch.ones(dim), requires_grad=True)
             if layer_scale_init_value > 0
@@ -73,7 +74,7 @@ class ConvNeXtDecoder(nn.Module):
                 layer_scale_init_value=1e-6, drop_out=dropout_rate
             ) for _ in range(num_layers)
         )
-        self.outconv = AdamWCov1d(
+        self.outconv = AdamWConv1d(
             num_channels, out_dims, kernel_size,
             stride=1, padding=(kernel_size - 1) // 2
         )

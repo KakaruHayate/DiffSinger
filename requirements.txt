@@ -19,5 +19,6 @@ resampy
 scipy>=1.10.0
 tensorboard
 tensorboardX
+torchao
 torchmetrics
 tqdm
