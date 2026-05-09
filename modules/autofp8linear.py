@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 try:
-    from torchao.float8 import convert_to_float8_training
+    from torchao.float8 import convert_to_float8_training, Float8LinearConfig
     TORCHAO_AVAILABLE = True
 except ImportError:
     TORCHAO_AVAILABLE = False
@@ -44,14 +44,19 @@ class AutoFP8Linear(nn.Module):
         # Optional identifier for logging / debugging
         self.layer_name = layer_name
 
+        config = Float8LinearConfig(
+            emulate=False,
+        )
+        
         # Inject FP8 training logic if supported
         if self.use_fp8:
             # This replaces self.linear parameters with Float8 format supporting delayed scaling
-            convert_to_float8_training(self.linear)
+            self.linear = convert_to_float8_training(self.linear, config=config)
             print(
                 f"convert_to_float8_training: layer '{self.layer_name}' "
                 f"({in_features} -> {out_features})"
             )
+            print(self.linear)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if torch.onnx.is_in_onnx_export() and self.use_fp8:
@@ -73,4 +78,20 @@ class AutoFP8Linear(nn.Module):
             # Standard functional interface – ONNX Tracer recognizes it as MatMul / Gemm
             return F.linear(x, weight_high_prec, bias_high_prec)
 
+        if self.use_fp8:
+            orig_shape = x.shape
+            x_2d = x.reshape(-1, orig_shape[-1])
+            m_tokens = x_2d.shape[0]
+            remainder = m_tokens % 16
+
+            if remainder != 0:
+                pad_len = 16 - remainder
+                x_padded = F.pad(x_2d, (0, 0, 0, pad_len))
+                out_padded = self.linear(x_padded)
+                out_2d = out_padded[:m_tokens, :]
+            else:
+                out_2d = self.linear(x_2d)
+
+            return out_2d.view(*orig_shape[:-1], -1)
+        
         return self.linear(x)
