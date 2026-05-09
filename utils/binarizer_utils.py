@@ -79,14 +79,15 @@ def get_pitch_parselmouth(
     return f0, uv
 
 
-def get_energy_librosa(waveform, length, *, hop_size, win_size, domain='db'):
+def get_energy_librosa(waveform, length, *, hop_size, win_size, domain='db', mu=255.0):
     """
     Definition of energy: RMS of the waveform, in dB representation
     :param waveform: [T]
     :param length: Expected number of frames
     :param hop_size: Frame width, in number of samples
     :param win_size: Window size, in number of samples
-    :param domain: db or amplitude
+    :param domain: 'db', 'amplitude', or 'mulaw'
+    :param mu: mu parameter for mu-law compression
     :return: energy
     """
     energy = librosa.feature.rms(y=waveform, frame_length=win_size, hop_length=hop_size)[0]
@@ -97,6 +98,8 @@ def get_energy_librosa(waveform, length, *, hop_size, win_size, domain='db'):
         energy = librosa.amplitude_to_db(energy)
     elif domain == 'amplitude':
         pass
+    elif domain == 'mulaw':
+        energy = np.log1p(mu * energy) / np.log1p(mu)
     else:
         raise ValueError(f'Invalid domain: {domain}')
     return energy
@@ -105,7 +108,8 @@ def get_energy_librosa(waveform, length, *, hop_size, win_size, domain='db'):
 def get_breathiness(
         waveform: Union[np.ndarray, DecomposedWaveform],
         samplerate, f0, length,
-        *, hop_size=None, fft_size=None, win_size=None
+        *, hop_size=None, fft_size=None, win_size=None, 
+        domain='db', mu=255.0
 ):
     """
     Definition of breathiness: RMS of the aperiodic part, in dB representation
@@ -116,6 +120,8 @@ def get_breathiness(
     :param hop_size: Frame width, in number of samples
     :param fft_size: Number of fft bins
     :param win_size: Window size, in number of samples
+    :param domain: 'db', 'amplitude', or 'mulaw'
+    :param mu: mu parameter for mu-law compression
     :return: breathiness
     """
     if not isinstance(waveform, DecomposedWaveform):
@@ -126,7 +132,8 @@ def get_breathiness(
     waveform_ap = waveform.aperiodic()
     breathiness = get_energy_librosa(
         waveform_ap, length=length,
-        hop_size=waveform.hop_size, win_size=waveform.win_size
+        hop_size=waveform.hop_size, win_size=waveform.win_size, 
+        domain=domain, mu=mu
     )
     return breathiness
 
@@ -134,7 +141,8 @@ def get_breathiness(
 def get_voicing(
         waveform: Union[np.ndarray, DecomposedWaveform],
         samplerate, f0, length,
-        *, hop_size=None, fft_size=None, win_size=None
+        *, hop_size=None, fft_size=None, win_size=None, 
+        domain='db', mu=255.0
 ):
     """
     Definition of voicing: RMS of the harmonic part, in dB representation
@@ -145,6 +153,8 @@ def get_voicing(
     :param hop_size: Frame width, in number of samples
     :param fft_size: Number of fft bins
     :param win_size: Window size, in number of samples
+    :param domain: 'db', 'amplitude', or 'mulaw'
+    :param mu: mu parameter for mu-law compression
     :return: voicing
     """
     if not isinstance(waveform, DecomposedWaveform):
@@ -155,7 +165,8 @@ def get_voicing(
     waveform_sp = waveform.harmonic()
     voicing = get_energy_librosa(
         waveform_sp, length=length,
-        hop_size=waveform.hop_size, win_size=waveform.win_size
+        hop_size=waveform.hop_size, win_size=waveform.win_size, 
+        domain=domain, mu=mu
     )
     return voicing
 
@@ -227,3 +238,16 @@ class SinusoidalSmoothingConv1d(torch.nn.Conv1d):
         else:
             smooth_kernel = torch.tensor([1.0], dtype=torch.float32)
         self.weight.data = smooth_kernel[None, None]
+
+
+def mulaw_to_db(y: torch.Tensor, mu: float = 255.0, min_db: float = -96.0) -> torch.Tensor:
+    amin = 10.0 ** (min_db / 20.0)
+    inv_mu = 1.0 / mu
+    x = ((1.0 + mu) ** y - 1.0) * inv_mu
+    x_clamped = torch.clamp(x, min=amin)
+    return 20.0 * torch.log10(x_clamped)
+
+def db_to_mulaw(db: torch.Tensor, mu: float = 255.0) -> torch.Tensor:
+    x = 10.0 ** (db / 20.0)
+    y = torch.log1p(mu * x) / torch.log1p(mu)
+    return y

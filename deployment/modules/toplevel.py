@@ -15,6 +15,7 @@ from deployment.modules.rectified_flow import (
 from deployment.modules.fastspeech2 import FastSpeech2AcousticONNX, FastSpeech2VarianceONNX
 from modules.toplevel import DiffSingerAcoustic, DiffSingerVariance
 from utils.hparams import hparams
+from utils.binarizer_utils import db_to_mulaw, mulaw_to_db
 
 
 class DiffSingerAcousticONNX(DiffSingerAcoustic):
@@ -297,11 +298,15 @@ class DiffSingerVarianceONNX(DiffSingerVariance):
             v_retake.float()  # [B, T, 1]
             for v_retake in (~retake).split(1, dim=2)
         ]
-        variance_embeds = [
-            self.variance_embeds[v_name](variances[v_name][:, :, None] * self.variance_retake_scaling[v_name]) * v_masks
-            for v_name, v_masks in zip(self.variance_prediction_list, non_retake_masks)
-        ]
-        variance_cond += torch.stack(variance_embeds, dim=-1).sum(-1)
+        variance_embeds_list = []
+        is_mulaw_domain = getattr(self, 'energy_domain', 'db') == 'mulaw'
+        for v_name, v_masks in zip(self.variance_prediction_list, non_retake_masks):
+            v_input = variances[v_name]
+            if is_mulaw_domain and v_name in ['energy', 'breathiness', 'voicing']:
+                v_input = db_to_mulaw(v_input)
+            v_embed = self.variance_embeds[v_name](v_input[:, :, None] * self.variance_retake_scaling[v_name]) * v_masks
+            variance_embeds_list.append(v_embed)
+        variance_cond += torch.stack(variance_embeds_list, dim=-1).sum(-1)
         if hparams['use_spk_id'] and spk_embed is not None:
             variance_cond += spk_embed
         return variance_cond
@@ -314,7 +319,13 @@ class DiffSingerVarianceONNX(DiffSingerVariance):
         if self.variance_predictor.num_feats == 1:
             xs_pred = [xs_pred]
         else:
-            xs_pred = xs_pred.unbind(dim=1)
+            xs_pred = list(xs_pred.unbind(dim=1))
+        is_mulaw_domain = getattr(self, 'energy_domain', 'db') == 'mulaw'
+        if is_mulaw_domain:
+            for i, v_name in enumerate(self.variance_prediction_list):
+                if v_name in ['energy', 'breathiness', 'voicing']:
+                    y_safe = torch.clamp(xs_pred[i], min=0.0, max=1.0)
+                    xs_pred[i] = mulaw_to_db(y_safe)
         variance_pred = self.variance_predictor.clamp_spec(xs_pred)
         return tuple(variance_pred)
 

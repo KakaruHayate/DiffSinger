@@ -10,6 +10,7 @@ from modules.fastspeech.acoustic_encoder import FastSpeech2Acoustic
 from modules.fastspeech.variance_encoder import FastSpeech2Variance
 from utils.hparams import hparams
 from utils.phoneme_utils import PAD_INDEX
+from utils.binarizer_utils import db_to_mulaw
 
 f0_bin = 256
 f0_max = 1100.0
@@ -110,10 +111,15 @@ class FastSpeech2AcousticONNX(FastSpeech2Acoustic):
         condition += pitch_embed
 
         if self.use_variance_embeds:
-            variance_embeds = torch.stack([
-                self.variance_embeds[v_name](variances[v_name][:, :, None] * self.variance_scaling_factor[v_name])
-                for v_name in self.variance_embed_list
-            ], dim=-1).sum(-1)
+            variance_embeds_list = []
+            is_mulaw_domain = hparams.get('energy_domain', 'db') == 'mulaw'
+            for v_name in self.variance_embed_list:
+                v_input = variances[v_name]
+                if is_mulaw_domain and v_name in ['energy', 'breathiness', 'voicing']:
+                    v_input = db_to_mulaw(v_input)
+                embed = self.variance_embeds[v_name](v_input[:, :, None] * self.variance_scaling_factor[v_name])
+                variance_embeds_list.append(embed)
+            variance_embeds = torch.stack(variance_embeds_list, dim=-1).sum(-1)
             condition += variance_embeds
 
         if hparams['use_key_shift_embed']:

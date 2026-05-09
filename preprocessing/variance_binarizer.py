@@ -85,6 +85,7 @@ class VarianceBinarizer(BaseBinarizer):
         self.lr = LengthRegulator().to(self.device)
         self.prefer_ds = self.binarization_args['prefer_ds']
         self.cached_ds = {}
+        self.energy_domain = hparams.get('energy_domain', 'db')
 
     def load_attr_from_ds(self, ds_id, name, attr, idx=0):
         item_name = f'{ds_id}:{name}'
@@ -409,7 +410,7 @@ class VarianceBinarizer(BaseBinarizer):
             if energy is None:
                 energy = get_energy_librosa(
                     waveform, length,
-                    hop_size=hparams['hop_size'], win_size=hparams['win_size']
+                    hop_size=hparams['hop_size'], win_size=hparams['win_size'], domain=self.energy_domain
                 ).astype(np.float32)
                 energy_from_wav = True
 
@@ -447,7 +448,7 @@ class VarianceBinarizer(BaseBinarizer):
                     )
             if breathiness is None:
                 breathiness = get_breathiness(
-                    dec_waveform, None, None, length=length
+                    dec_waveform, None, None, length=length, domain=self.energy_domain
                 )
                 breathiness_from_wav = True
 
@@ -478,7 +479,7 @@ class VarianceBinarizer(BaseBinarizer):
                     )
             if voicing is None:
                 voicing = get_voicing(
-                    dec_waveform, None, None, length=length
+                    dec_waveform, None, None, length=length, domain=self.energy_domain
                 )
                 voicing_from_wav = True
 

@@ -11,6 +11,7 @@ from modules.commons.common_layers import (
 from modules.fastspeech.tts_modules import FastSpeech2Encoder, mel2ph_to_dur, StretchRegulator
 from utils.hparams import hparams
 from utils.phoneme_utils import PAD_INDEX
+from utils.binarizer_utils import db_to_mulaw
 
 
 class FastSpeech2Acoustic(nn.Module):
@@ -84,6 +85,11 @@ class FastSpeech2Acoustic(nn.Module):
                 'speed': 1.
             }
 
+        self.energy_domain = hparams.get('energy_domain', 'db')
+        if self.energy_domain == 'mulaw':
+            for v_name in ['energy', 'breathiness', 'voicing']:
+                self.variance_scaling_factor[v_name] = 1.0
+
         self.use_key_shift_embed = hparams.get('use_key_shift_embed', False)
         if self.use_key_shift_embed:
             self.key_shift_embed = AdamWLinear(1, hparams['hidden_size'])
@@ -96,12 +102,16 @@ class FastSpeech2Acoustic(nn.Module):
         if self.use_spk_id:
             self.spk_embed = Embedding(hparams['num_spk'], hparams['hidden_size'])
 
-    def forward_variance_embedding(self, condition, key_shift=None, speed=None, **variances):
+    def forward_variance_embedding(self, condition, key_shift=None, speed=None, infer=False, **variances):
         if self.use_variance_embeds:
-            variance_embeds = torch.stack([
-                self.variance_embeds[v_name](variances[v_name][:, :, None] * self.variance_scaling_factor[v_name])
-                for v_name in self.variance_embed_list
-            ], dim=-1).sum(-1)
+            variance_embeds_list = []
+            for v_name in self.variance_embed_list:
+                v_input = variances[v_name]
+                if infer and self.energy_domain == 'mulaw' and v_name in ['energy', 'breathiness', 'voicing']:
+                    v_input = db_to_mulaw(v_input)
+                embed = self.variance_embeds[v_name](v_input[:, :, None] * self.variance_scaling_factor[v_name])
+                variance_embeds_list.append(embed)
+            variance_embeds = torch.stack(variance_embeds_list, dim=-1).sum(-1)
             condition += variance_embeds
 
         if self.use_key_shift_embed:
@@ -163,7 +173,7 @@ class FastSpeech2Acoustic(nn.Module):
         condition += pitch_embed
 
         condition = self.forward_variance_embedding(
-            condition, key_shift=key_shift, speed=speed, **kwargs
+            condition, key_shift=key_shift, speed=speed, infer=infer, **kwargs
         )
 
         return condition

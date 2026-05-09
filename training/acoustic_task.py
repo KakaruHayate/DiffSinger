@@ -15,6 +15,7 @@ from modules.toplevel import DiffSingerAcoustic, ShallowDiffusionOutput
 from modules.vocoders.registry import get_vocoder_cls
 from utils.hparams import hparams
 from utils.plot import spec_to_figure
+from utils.binarizer_utils import mulaw_to_db
 
 matplotlib.use('Agg')
 
@@ -125,6 +126,10 @@ class AcousticTask(BaseTask):
             v_name: sample[v_name]
             for v_name in self.required_variances
         }
+        if infer and hparams.get('energy_domain', 'db') == 'mulaw':
+            for v_name in ['energy', 'breathiness', 'voicing']:
+                if v_name in variances:
+                    variances[v_name] = mulaw_to_db(variances[v_name])
         key_shift = sample.get('key_shift')
         speed = sample.get('speed')
 

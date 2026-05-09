@@ -68,6 +68,7 @@ class AcousticBinarizer(BaseBinarizer):
             "Mel base must be set to \'e\' according to 2nd stage of the migration plan. "
             "See https://github.com/openvpi/DiffSinger/releases/tag/v2.3.0 for more details."
         )
+        self.energy_domain = hparams.get('energy_domain', 'db')
 
     def load_meta_data(self, raw_data_dir: pathlib.Path, ds_id, spk, lang):
         meta_data_dict = {}
@@ -156,7 +157,7 @@ class AcousticBinarizer(BaseBinarizer):
         if self.need_energy:
             # get ground truth energy
             energy = get_energy_librosa(
-                waveform, length, hop_size=hparams['hop_size'], win_size=hparams['win_size']
+                waveform, length, hop_size=hparams['hop_size'], win_size=hparams['win_size'], domain=self.energy_domain
             ).astype(np.float32)
 
             global energy_smooth
@@ -178,7 +179,7 @@ class AcousticBinarizer(BaseBinarizer):
         if self.need_breathiness:
             # get ground truth breathiness
             breathiness = get_breathiness(
-                dec_waveform, None, None, length=length
+                dec_waveform, None, None, length=length, domain=self.energy_domain
             )
 
             global breathiness_smooth
@@ -193,7 +194,7 @@ class AcousticBinarizer(BaseBinarizer):
         if self.need_voicing:
             # get ground truth voicing
             voicing = get_voicing(
-                dec_waveform, None, None, length=length
+                dec_waveform, None, None, length=length, domain=self.energy_domain
             )
 
             global voicing_smooth

@@ -22,6 +22,7 @@ from modules.fastspeech.param_adaptor import ParameterAdaptorModule
 from modules.fastspeech.tts_modules import RhythmRegulator, LengthRegulator, StretchRegulator
 from modules.fastspeech.variance_encoder import FastSpeech2Variance, MelodyEncoder
 from utils.hparams import hparams
+from utils.binarizer_utils import mulaw_to_db
 
 
 class ShallowDiffusionOutput:
@@ -217,6 +218,12 @@ class DiffSingerVariance(CategorizedModule, ParameterAdaptorModule):
             'key_shift': 1. / 12,
             'speed': 1.
         }
+        
+        self.energy_domain = hparams.get('energy_domain', 'db')
+        if self.energy_domain == 'mulaw':
+            for v_name in ['energy', 'breathiness', 'voicing']:
+                self.custom_variance_scaling_factor[v_name] = 1.0
+        
         self.default_variance_scaling_factor = {
             'energy': 1.,
             'breathiness': 1.,
@@ -361,6 +368,10 @@ class DiffSingerVariance(CategorizedModule, ParameterAdaptorModule):
 
         if infer:
             variances_pred_out = self.collect_variance_outputs(variance_outputs)
+i           f self.energy_domain == 'mulaw':
+                for v_name in ['energy', 'breathiness', 'voicing']:
+                    if v_name in variances_pred_out:
+                        variances_pred_out[v_name] = mulaw_to_db(variances_pred_out[v_name])
         else:
             variances_pred_out = variance_outputs
 
