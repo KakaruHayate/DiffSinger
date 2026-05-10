@@ -215,7 +215,7 @@ class Mixed_LayerNorm(nn.Module):
             beta_distribution_concentration
         )
 
-        self.affine = AdamWLinear(condition_channels, channels * 2, bias=bias)
+        self.affine = XavierUniformInitLinear(condition_channels, channels * 2, bias=bias)
         if self.affine.bias is not None:
             self.affine.bias.data[:channels] = 1
             self.affine.bias.data[channels:] = 0
