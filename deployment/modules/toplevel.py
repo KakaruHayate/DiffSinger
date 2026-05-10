@@ -320,13 +320,15 @@ class DiffSingerVarianceONNX(DiffSingerVariance):
             xs_pred = [xs_pred]
         else:
             xs_pred = list(xs_pred.unbind(dim=1))
+        variance_pred = list(self.variance_predictor.clamp_spec(xs_pred))
         is_mulaw_domain = getattr(self, 'energy_domain', 'db') == 'mulaw'
         if is_mulaw_domain:
             for i, v_name in enumerate(self.variance_prediction_list):
                 if v_name in ['energy', 'breathiness', 'voicing']:
-                    y_safe = torch.clamp(xs_pred[i], min=0.0, max=1.0)
-                    xs_pred[i] = mulaw_to_db(y_safe)
-        variance_pred = self.variance_predictor.clamp_spec(xs_pred)
+                    db_val = mulaw_to_db(variance_pred[i])
+                    db_min = hparams.get(f'{v_name}_db_min', -96.0)
+                    db_max = hparams.get(f'{v_name}_db_max', 0.0)
+                    variance_pred[i] = torch.clamp(db_val, min=db_min, max=db_max)
         return tuple(variance_pred)
 
     def view_as_linguistic_encoder(self):
