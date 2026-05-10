@@ -249,5 +249,5 @@ def mulaw_to_db(y: torch.Tensor, mu: float = 255.0, min_db: float = -96.0) -> to
 
 def db_to_mulaw(db: torch.Tensor, mu: float = 255.0) -> torch.Tensor:
     x = 10.0 ** (db / 20.0)
-    y = torch.log1p(mu * x) / torch.log1p(mu)
+    y = torch.log1p(mu * x) / np.log1p(mu)
     return y

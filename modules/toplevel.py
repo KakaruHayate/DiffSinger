@@ -368,7 +368,7 @@ class DiffSingerVariance(CategorizedModule, ParameterAdaptorModule):
 
         if infer:
             variances_pred_out = self.collect_variance_outputs(variance_outputs)
-i           f self.energy_domain == 'mulaw':
+            if self.energy_domain == 'mulaw':
                 for v_name in ['energy', 'breathiness', 'voicing']:
                     if v_name in variances_pred_out:
                         variances_pred_out[v_name] = mulaw_to_db(variances_pred_out[v_name])
