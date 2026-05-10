@@ -31,27 +31,41 @@ class ParameterAdaptorModule(torch.nn.Module):
     def build_adaptor(self, cls=MultiVarianceDiffusion):
         ranges = []
         clamps = []
+        
+        is_mulaw = hparams.get('energy_domain', 'db') == 'mulaw'
 
         if self.predict_energy:
-            ranges.append((
-                hparams['energy_db_min'],
-                hparams['energy_db_max']
-            ))
-            clamps.append((hparams['energy_db_min'], 0.))
+            if is_mulaw:
+                ranges.append((0.0, 1.0))
+                clamps.append((0.0, 1.0))
+            else:
+                ranges.append((
+                    hparams['energy_db_min'],
+                    hparams['energy_db_max']
+                ))
+                clamps.append((hparams['energy_db_min'], 0.))
 
         if self.predict_breathiness:
-            ranges.append((
-                hparams['breathiness_db_min'],
-                hparams['breathiness_db_max']
-            ))
-            clamps.append((hparams['breathiness_db_min'], 0.))
+            if is_mulaw:
+                ranges.append((0.0, 1.0))
+                clamps.append((0.0, 1.0))
+            else:
+                ranges.append((
+                    hparams['breathiness_db_min'],
+                    hparams['breathiness_db_max']
+                ))
+                clamps.append((hparams['breathiness_db_min'], 0.))
 
         if self.predict_voicing:
-            ranges.append((
-                hparams['voicing_db_min'],
-                hparams['voicing_db_max']
-            ))
-            clamps.append((hparams['voicing_db_min'], 0.))
+            if is_mulaw:
+                ranges.append((0.0, 1.0))
+                clamps.append((0.0, 1.0))
+            else:
+                ranges.append((
+                    hparams['voicing_db_min'],
+                    hparams['voicing_db_max']
+                ))
+                clamps.append((hparams['voicing_db_min'], 0.))
 
         if self.predict_tension:
             ranges.append((
