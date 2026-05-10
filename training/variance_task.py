@@ -15,7 +15,7 @@ from modules.metrics import (
 from modules.toplevel import DiffSingerVariance
 from utils.hparams import hparams
 from utils.plot import dur_to_figure, pitch_note_to_figure, curve_to_figure
-from utils.binarizer_utils import mulaw_to_db
+from utils.binarizer_utils import mulaw_to_db, db_to_mulaw
 
 matplotlib.use('Agg')
 
@@ -293,18 +293,36 @@ class VarianceTask(BaseTask):
                         )
                     for name in self.variance_prediction_list:
                         variance_len = self.valid_dataset.metadata[name][data_idx]
-                        gt_variances = sample[name][i][:variance_len].unsqueeze(0)
-                        if hparams.get('energy_domain', 'db') == 'mulaw' and name in ['energy', 'breathiness', 'voicing']:
-                            gt_variances = mulaw_to_db(gt_variances)
-                        pred_variances = variances_preds[name][i][:variance_len].unsqueeze(0)
+                        gt_variances_raw = sample[name][i][:variance_len].unsqueeze(0)
+                        pred_variances_raw = variances_preds[name][i][:variance_len].unsqueeze(0)
                         mask = (sample_get('mel2ph', i, data_idx) > 0) & ~sample_get('uv', i, data_idx)
-                        self.valid_metrics[f'{name}_r2'].update(pred=pred_variances, target=gt_variances, mask=mask)
-                        self.plot_curve(
-                            data_idx,
-                            gt_curve=gt_variances,
-                            pred_curve=pred_variances,
-                            curve_name=name
-                        )
+                        if hparams.get('energy_domain', 'db') == 'mulaw' and name in ['energy', 'breathiness', 'voicing']:
+                            # --- 绘制并计算 dB 域 ---
+                            gt_variances_db = mulaw_to_db(gt_variances_raw)
+                            pred_variances_db = pred_variances_raw
+                            self.valid_metrics[f'{name}_r2'].update(pred=pred_variances_db, target=gt_variances_db, mask=mask)
+                            self.plot_curve(
+                                data_idx,
+                                gt_curve=gt_variances_db,
+                                pred_curve=pred_variances_db,
+                                curve_name=name
+                            )
+                            gt_variances_mulaw = gt_variances_raw
+                            pred_variances_mulaw = db_to_mulaw(pred_variances_db)
+                            self.plot_curve(
+                                data_idx,
+                                gt_curve=gt_variances_mulaw,
+                                pred_curve=pred_variances_mulaw,
+                                curve_name=f'{name}_mulaw'
+                            )
+                        else:
+                            self.valid_metrics[f'{name}_r2'].update(pred=pred_variances_raw, target=gt_variances_raw, mask=mask)
+                            self.plot_curve(
+                                data_idx,
+                                gt_curve=gt_variances_raw,
+                                pred_curve=pred_variances_raw,
+                                curve_name=name
+                            )
         return losses, sample['size']
 
     ############
