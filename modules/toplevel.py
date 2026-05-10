@@ -89,7 +89,7 @@ class DiffSingerAcoustic(CategorizedModule, ParameterAdaptorModule):
     ) -> ShallowDiffusionOutput:
         condition = self.fs2(
             txt_tokens, mel2ph, f0, key_shift=key_shift, speed=speed,
-            spk_embed_id=spk_embed_id, languages=languages,
+            spk_embed_id=spk_embed_id, languages=languages,infer=infer, 
             **kwargs
         )
         if infer:

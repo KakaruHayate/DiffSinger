@@ -127,7 +127,7 @@ class FastSpeech2Acoustic(nn.Module):
     def forward(
             self, txt_tokens, mel2ph, f0,
             key_shift=None, speed=None,
-            spk_embed_id=None, languages=None,
+            spk_embed_id=None, languages=None,infer=False, 
             **kwargs
     ):
         txt_embed = self.txt_embed(txt_tokens)
