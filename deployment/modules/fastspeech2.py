@@ -116,7 +116,7 @@ class FastSpeech2AcousticONNX(FastSpeech2Acoustic):
             for v_name in self.variance_embed_list:
                 v_input = variances[v_name]
                 if is_mulaw_domain and v_name in ['energy', 'breathiness', 'voicing']:
-                    v_input = db_to_mulaw(v_input)
+                    v_input = torch.clamp(db_to_mulaw(v_input), min=0, max=1)
                 embed = self.variance_embeds[v_name](v_input[:, :, None] * self.variance_scaling_factor[v_name])
                 variance_embeds_list.append(embed)
             variance_embeds = torch.stack(variance_embeds_list, dim=-1).sum(-1)
