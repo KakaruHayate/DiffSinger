@@ -478,7 +478,7 @@ class VarianceBinarizer(BaseBinarizer):
                     )
             if voicing is None:
                 voicing = get_voicing(
-                    dec_waveform, None, None, length=length
+                    dec_waveform, None, None, length=length, domain=hparams['voicing_domain']
                 )
                 voicing_from_wav = True
 
