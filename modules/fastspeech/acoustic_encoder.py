@@ -102,6 +102,10 @@ class FastSpeech2Acoustic(nn.Module):
         if self.use_spk_id:
             self.spk_embed = Embedding(hparams['num_spk'], hparams['hidden_size'])
 
+        self.use_shift_mouth_opening_embed = hparams.get('use_shift_mouth_opening_embed', False)
+        if self.use_shift_mouth_opening_embed:
+            self.opec_embed = AdamWLinear(1, hparams['hidden_size'])
+
     def forward_variance_embedding(self, condition, key_shift=None, speed=None, **variances):
         if self.use_variance_embeds:
             variance_embeds = torch.stack([
@@ -169,8 +173,26 @@ class FastSpeech2Acoustic(nn.Module):
         pitch_embed = self.pitch_embed(f0_mel[:, :, None])
         condition += pitch_embed
 
-        condition = self.forward_variance_embedding(
-            condition, key_shift=key_shift, speed=speed, **kwargs
+        condition_normal = self.forward_variance_embedding(
+            condition.clone(), key_shift=key_shift, speed=speed, **kwargs
         )
 
-        return condition
+        if getattr(self, 'use_shift_mouth_opening_embed', False):
+            condition_shm = condition.detach()
+
+            if self.use_key_shift_embed and key_shift is not None:
+                key_shift_embed = self.key_shift_embed(key_shift[:, :, None] * self.variance_scaling_factor['key_shift'])
+                condition_shm = condition_shm + key_shift_embed.detach()
+
+            if self.use_speed_embed and speed is not None:
+                speed_embed = self.speed_embed(speed[:, :, None] * self.variance_scaling_factor['speed'])
+                condition_shm = condition_shm + speed_embed.detach()
+
+            opec = kwargs.get('opec')
+            if opec is not None:
+                opec_emb = self.opec_embed(opec[:, :, None])
+                condition_shm = condition_shm + opec_emb
+        else:
+            condition_shm = None
+
+        return condition_normal, condition_shm

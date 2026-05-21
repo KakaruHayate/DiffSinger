@@ -33,12 +33,17 @@ class RectifiedFlow(nn.Module):
         self.register_buffer('spec_min', spec_min, persistent=False)
         self.register_buffer('spec_max', spec_max, persistent=False)
 
-    def p_losses(self, x_end, t, cond):
+    def p_losses(self, x_end, t, cond, src_spec=None):
         x_start = torch.randn_like(x_end)
-        x_t = x_start + t[:, None, None, None] * (x_end - x_start)
+        if src_spec is not None:
+            x_t = x_start + t[:, None, None, None] * (src_spec - x_start)
+            v_gt = (x_end - x_t) / (1.0 - t[:, None, None, None] + 1e-5)
+        else:
+            x_t = x_start + t[:, None, None, None] * (x_end - x_start)
+            v_gt = x_end - x_start
         v_pred = self.velocity_fn(x_t, t * self.time_scale_factor, cond)
 
-        return v_pred, x_end - x_start
+        return v_pred, v_gt
 
     def forward(self, condition, gt_spec=None, src_spec=None, infer=True):
         cond = condition.transpose(1, 2)
@@ -49,8 +54,14 @@ class RectifiedFlow(nn.Module):
             spec = self.norm_spec(gt_spec).transpose(-2, -1)  # [B, M, T] or [B, F, M, T]
             if self.num_feats == 1:
                 spec = spec[:, None, :, :]  # [B, F=1, M, T]
+            if src_spec is not None:
+                src_s = self.norm_spec(src_spec).transpose(-2, -1)
+                if self.num_feats == 1:
+                    src_s = src_s[:, None, :, :]
+            else:
+                src_s = None
             t = self.t_start + (1.0 - self.t_start) * torch.rand((b,), device=device)
-            v_pred, v_gt = self.p_losses(spec, t, cond=cond)
+            v_pred, v_gt = self.p_losses(spec, t, cond=cond, src_spec=src_s)
             return v_pred, v_gt, t
         else:
             # src_spec: [B, T, M] or [B, F, T, M]
