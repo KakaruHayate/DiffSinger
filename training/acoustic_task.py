@@ -32,7 +32,7 @@ class AcousticDataset(BaseDataset):
         if hparams['use_tension_embed']:
             self.required_variances['tension'] = 0.0
         if hparams.get('use_shift_mouth_opening_embed', False):
-            self.required_variances['opec'] = hparams['opec_min']
+            self.required_variances['mouth_opening'] = hparams['opec_min']
 
         self.need_key_shift = hparams['use_key_shift_embed']
         self.need_speed = hparams['use_speed_embed']
@@ -97,7 +97,7 @@ class AcousticTask(BaseTask):
             
         self.use_shift_mouth_opening_embed = hparams.get('use_shift_mouth_opening_embed', False)
         if self.use_shift_mouth_opening_embed:
-            self.required_variances.append('opec')
+            self.required_variances.append('mouth_opening')
         
         super()._finish_init()
 

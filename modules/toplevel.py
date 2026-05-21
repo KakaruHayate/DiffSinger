@@ -164,7 +164,7 @@ class DiffSingerAcoustic(CategorizedModule, ParameterAdaptorModule):
                 if torch.rand(1).item() < p_replace:
                     alpha = (torch.rand((condition.shape[0], condition.shape[1], 1), device=condition.device) * 2 - 1)
                     
-                    gt_opec = kwargs.get('opec')
+                    gt_opec = kwargs.get('mouth_opening')
                     shifted_opec = calculate_shifted_opec(gt_opec, -alpha.squeeze(-1), o_min=self.opec_min, o_max=self.opec_max)
                     
                     gt_opec_emb = self.fs2.opec_embed(gt_opec[:, :, None])

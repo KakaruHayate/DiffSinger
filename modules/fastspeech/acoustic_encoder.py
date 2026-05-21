@@ -112,6 +112,8 @@ class FastSpeech2Acoustic(nn.Module):
                 self.variance_embeds[v_name](variances[v_name][:, :, None] * self.variance_scaling_factor[v_name])
                 for v_name in self.variance_embed_list
             ], dim=-1).sum(-1)
+            # print(variances['tension'].shape)
+            # print(variances['mouth_opening'].shape)
             condition += variance_embeds
 
         if self.use_key_shift_embed:
@@ -188,7 +190,7 @@ class FastSpeech2Acoustic(nn.Module):
                 speed_embed = self.speed_embed(speed[:, :, None] * self.variance_scaling_factor['speed'])
                 condition_shm = condition_shm + speed_embed.detach()
 
-            opec = kwargs.get('opec')
+            opec = kwargs['mouth_opening']
             if opec is not None:
                 opec_emb = self.opec_embed(opec[:, :, None])
                 condition_shm = condition_shm + opec_emb
