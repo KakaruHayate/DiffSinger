@@ -37,11 +37,10 @@ class BiLSTMCurveEstimator(nn.Module):
         self.input_stack = nn.Sequential(
             nn.Conv1d(in_dims, conv_dims, 3, 1, 1, bias=False),
             # nn.BatchNorm1d(hidden_dims), 
-            # 注：batchnorm在不使用SSL时效果是优于groupnorm的，但是半监督训练时和训练方式似乎有冲突，因此沿用FCPE的做法
             # nn.ReLU(),
             nn.GroupNorm(4, conv_dims), 
             nn.LeakyReLU(),
-            nn.Dropout(conv_dropout), # 依赖这个dropout构建样本
+            nn.Dropout(conv_dropout), # Rely on this dropout to construct samples
             nn.Conv1d(conv_dims, conv_dims, 3, 1, 1, bias=False)
         )
         # LSTM
@@ -60,14 +59,12 @@ class BiLSTMCurveEstimator(nn.Module):
             nn.Linear(hidden_dims, 1),
             nn.Sigmoid()
         )
-        for name, param in self.rnn.named_parameters():
-            if 'weight' in name:
-                torch.nn.init.xavier_uniform_(param)
-            elif 'bias' in name:
-                torch.nn.init.zeros_(param)
 
         # post process
-        self.k_filter = nn.Parameter(torch.ones(num_speakers))
+        # self.k_filter = nn.Parameter(torch.ones(num_speakers))
+        self.p0 = (0.0 - self.vmin) / (self.vmax - self.vmin)
+        self.k_filter = nn.Embedding(num_speakers, 1)
+        nn.init.constant_(self.k_filter.weight, 0.0)
 
     def forward(self, x: torch.Tensor, spk_id: torch.Tensor=None) -> torch.Tensor:
         """
@@ -81,8 +78,10 @@ class BiLSTMCurveEstimator(nn.Module):
         x, _ = self.rnn(x)
         x = self.output_proj(x)
         if spk_id is not None:
-            k_filter = self.k_filter[spk_id].view(-1, *([1]*(x.dim()-1)))
-            x = x * k_filter
+            k_filter = self.k_filter(spk_id).view(-1,1,1)
+            k_filter = 0.5 + 1.5 * torch.sigmoid(k_filter)
+            k_filter = torch.clamp(k_filter, min=0.3, max=2.5)
+            x = (x - self.p0) * k_filter + self.p0
         return x.squeeze(-1)  # normalized curve (B, T)
 
     def normalize(self, x: torch.Tensor) -> torch.Tensor:

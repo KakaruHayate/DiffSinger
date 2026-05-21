@@ -143,7 +143,7 @@ class CurveEstimator:
         mel = dynamic_range_compression_torch(
             self.mel_spec_transform(waveform), clip_val=1e-5
         ).transpose(1, 2)
-        pred_curve = self.model(mel).squeeze(0).cpu().numpy()
+        pred_curve = self.model.infer(mel).squeeze(0).cpu().numpy()
         pred_curve = np.interp(
             np.linspace(0, len(pred_curve), length),
             np.arange(len(pred_curve)),
