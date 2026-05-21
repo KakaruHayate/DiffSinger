@@ -36,8 +36,9 @@ class RectifiedFlow(nn.Module):
     def p_losses(self, x_end, t, cond, src_spec=None):
         x_start = torch.randn_like(x_end)
         if src_spec is not None:
-            x_t = x_start + t[:, None, None, None] * (src_spec - x_start)
-            v_gt = (x_end - x_t) / (1.0 - t[:, None, None, None] + 1e-5)
+            dynamic_target = (1.0 - t[:, None, None, None]) * src_spec + t[:, None, None, None] * x_end
+            x_t = x_start + t[:, None, None, None] * (dynamic_target - x_start)
+            v_gt = (1.0 + t[:, None, None, None]) * x_end - x_start - t[:, None, None, None] * src_spec
         else:
             x_t = x_start + t[:, None, None, None] * (x_end - x_start)
             v_gt = x_end - x_start
