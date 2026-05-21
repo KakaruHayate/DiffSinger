@@ -7,7 +7,7 @@ from modules.core.ddpm import MultiVarianceDiffusion
 from utils import filter_kwargs
 from utils.hparams import hparams
 
-VARIANCE_CHECKLIST = ['energy', 'breathiness', 'voicing', 'tension']
+VARIANCE_CHECKLIST = ['energy', 'breathiness', 'voicing', 'tension', 'mouth_opening']
 
 
 class ParameterAdaptorModule(torch.nn.Module):
@@ -26,6 +26,10 @@ class ParameterAdaptorModule(torch.nn.Module):
             self.variance_prediction_list.append('voicing')
         if self.predict_tension:
             self.variance_prediction_list.append('tension')
+
+        self.use_shift_mouth_opening_embed = hparams.get('use_shift_mouth_opening_embed', False)
+        if self.use_shift_mouth_opening_embed:
+            self.variance_prediction_list.append('mouth_opening')
         self.predict_variances = len(self.variance_prediction_list) > 0
 
     def build_adaptor(self, cls=MultiVarianceDiffusion):
@@ -63,6 +67,16 @@ class ParameterAdaptorModule(torch.nn.Module):
                 hparams['tension_logit_max']
             ))
 
+        if self.use_shift_mouth_opening_embed:
+            ranges.append((
+                hparams['opec_min'],
+                hparams['opec_max']
+            ))
+            clamps.append((
+                hparams['opec_min'],
+                hparams['opec_max']
+            ))
+        
         variances_hparams = hparams['variances_prediction_args']
         total_repeat_bins = variances_hparams['total_repeat_bins']
         assert total_repeat_bins % len(self.variance_prediction_list) == 0, \
