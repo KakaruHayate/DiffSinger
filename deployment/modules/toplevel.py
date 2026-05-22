@@ -67,7 +67,8 @@ class DiffSingerAcousticONNX(DiffSingerAcoustic):
             gender: Tensor = None,
             velocity: Tensor = None,
             spk_embed: Tensor = None,
-            languages: Tensor = None
+            languages: Tensor = None,
+            shift_mouth_opening: Tensor = None
     ):
         condition = self.fs2(
             tokens, durations, f0, variances=variances,
@@ -76,6 +77,8 @@ class DiffSingerAcousticONNX(DiffSingerAcoustic):
         )
         if self.use_shallow_diffusion:
             aux_mel_pred = self.aux_decoder(condition, infer=True)
+            if getattr(self, 'use_shift_mouth_opening_embed', False) and shift_mouth_opening is not None:
+                condition = condition + self.shm_layer(shift_mouth_opening[:, :, None])
             return condition, aux_mel_pred
         else:
             return condition
@@ -105,6 +108,8 @@ class DiffSingerAcousticONNX(DiffSingerAcoustic):
     def view_as_fs2_aux(self) -> nn.Module:
         model = copy.deepcopy(self)
         del model.diffusion
+        if getattr(self, 'use_shift_mouth_opening_embed', False):
+            del model.shm_decoder
         model.forward = model.forward_fs2_aux
         return model
 
@@ -113,6 +118,8 @@ class DiffSingerAcousticONNX(DiffSingerAcoustic):
         del model.fs2
         if self.use_shallow_diffusion:
             del model.aux_decoder
+            if getattr(self, 'use_shift_mouth_opening_embed', False):
+                del model.shm_decoder
             model.forward = model.forward_shallow_diffusion
         else:
             model.forward = model.forward_diffusion
@@ -123,6 +130,8 @@ class DiffSingerAcousticONNX(DiffSingerAcoustic):
         del model.fs2
         if self.use_shallow_diffusion:
             del model.aux_decoder
+            if getattr(self, 'use_shift_mouth_opening_embed', False):
+                del model.shm_decoder
             model.forward = model.forward_shallow_reflow
         else:
             model.forward = model.forward_reflow
