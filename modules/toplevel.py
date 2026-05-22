@@ -93,7 +93,12 @@ class DiffSingerAcoustic(CategorizedModule, ParameterAdaptorModule):
                 aux_decoder_arch=self.shallow_args['aux_decoder_arch'],
                 aux_decoder_args=self.shallow_args['aux_decoder_args']
             )
-            self.shm_layer = AdamWLinear(1, hparams['hidden_size'])
+            self.shm_layer = nn.Sequential(
+                SinusoidalPosEmb(hparams['hidden_size']),
+                nn.Linear(hparams['hidden_size'], hparams['hidden_size'] * 4),
+                nn.GELU(),
+                nn.Linear(hparams['hidden_size'] * 4, hparams['hidden_size']),
+            )
         
         if self.diffusion_type == 'ddpm':
             self.diffusion = GaussianDiffusion(
@@ -142,44 +147,36 @@ class DiffSingerAcoustic(CategorizedModule, ParameterAdaptorModule):
             if self.use_shift_mouth_opening_embed:
                 alpha = kwargs.get('alpha', 0.0)
                 if isinstance(alpha, (float, int)):
-                    alpha_tensor = torch.full((condition.shape[0], condition.shape[1], 1), 
-                                              fill_value=alpha, device=condition.device, dtype=condition.dtype)
+                    alpha_tensor = torch.full((condition.shape[0], condition.shape[1]), fill_value=alpha, device=condition.device, dtype=condition.dtype)
                 else:
-                    alpha_tensor = alpha
-                condition = condition + self.shm_layer(alpha_tensor)
+                    alpha_tensor = alpha.squeeze(-1)
+                condition = condition + self.shm_layer(alpha_tensor * 1000.0)
             mel_pred = self.diffusion(condition, src_spec=src_mel, infer=True)
             mel_pred *= ((mel2ph > 0).float()[:, :, None])
             return ShallowDiffusionOutput(aux_out=aux_mel_pred, diff_out=mel_pred)
         else:
             shm_out = None
-            diff_src_spec = None
+            delta_shm= None
             condition_diff = condition
-            
             if self.use_shift_mouth_opening_embed:
                 shm_out = self.shm_decoder(condition_shm, infer=False)
-                
                 global_step = kwargs.get('global_step', 0)
                 p_replace = get_shm_replace_prob(global_step, start_step=self.shm_training_start, end_step=self.shm_training_warmup, target_prob=self.shm_training_prob)
-                
                 if torch.rand(1).item() < p_replace:
                     alpha = (torch.rand((condition.shape[0], condition.shape[1], 1), device=condition.device) * 2 - 1)
-                    
                     gt_opec = kwargs.get('mouth_opening')
-                    shifted_opec = calculate_shifted_opec(gt_opec, -alpha.squeeze(-1), o_min=self.opec_min, o_max=self.opec_max)
-                    
+                    shifted_opec = calculate_shifted_opec(gt_opec, -alpha.squeeze(-1))
                     gt_opec_emb = self.fs2.opec_embed(gt_opec[:, :, None])
                     shifted_opec_emb = self.fs2.opec_embed(shifted_opec[:, :, None])
                     shifted_condition_shm = condition_shm - gt_opec_emb + shifted_opec_emb
-                    
                     with torch.no_grad():
-                        x_end_shifted = self.shm_decoder(shifted_condition_shm, infer=False)
-                        x_end_shifted = x_end_shifted.detach()
-                    
-                    condition_diff = condition + self.shm_layer(alpha)
-                    diff_src_spec = x_end_shifted
+                        src_spec_shifted = self.shm_decoder(shifted_condition_shm, infer=False)
+                        src_spec_base = self.shm_decoder(condition_shm, infer=False)
+                    delta_shm = (src_spec_shifted - src_spec_base).detach()
+                    condition_diff = condition + self.shm_layer(alpha.squeeze(-1)*1000)
                 else:
-                    alpha = torch.zeros((condition.shape[0], condition.shape[1], 1), device=condition.device)
-                    condition_diff = condition + self.shm_layer(alpha)
+                    alpha = torch.zeros((condition.shape[0], condition.shape[1]), device=condition.device)
+                    condition_diff = condition + self.shm_layer(alpha*1000)
             
             if self.use_shallow_diffusion:
                 if self.train_aux_decoder:
@@ -189,16 +186,16 @@ class DiffSingerAcoustic(CategorizedModule, ParameterAdaptorModule):
                     aux_out = None
                 
                 if self.train_diffusion:
-                    if self.use_shift_mouth_opening_embed and diff_src_spec is not None:
-                        diff_out = self.diffusion(condition_diff, gt_spec=gt_mel, src_spec=diff_src_spec, infer=False)
+                    if self.use_shift_mouth_opening_embed and delta_shm is not None:
+                        diff_out = self.diffusion(condition_diff, gt_spec=gt_mel, delta_spec=delta_shm, infer=False)
                     else:
                         diff_out = self.diffusion(condition_diff, gt_spec=gt_mel, infer=False)
                 else:
                     diff_out = None
             else:
                 aux_out = None
-                if self.use_shift_mouth_opening_embed and diff_src_spec is not None:
-                    diff_out = self.diffusion(condition_diff, gt_spec=gt_mel, src_spec=diff_src_spec, infer=False)
+                if self.use_shift_mouth_opening_embed and delta_shm is not None:
+                    diff_out = self.diffusion(condition_diff, gt_spec=gt_mel, delta_spec=delta_shm, infer=False)
                 else:
                     diff_out = self.diffusion(condition_diff, gt_spec=gt_mel, infer=False)
 
