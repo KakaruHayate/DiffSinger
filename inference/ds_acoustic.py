@@ -34,6 +34,8 @@ class DiffSingerAcousticInfer(BaseSVSInfer):
                 self.variances_to_embed.add('voicing')
             if hparams.get('use_tension_embed', False):
                 self.variances_to_embed.add('tension')
+            if hparams.get('use_mouth_opening_embed', False):
+                self.variances_to_embed.add('mouth_opening')
 
             self.phoneme_dictionary = load_phoneme_dictionary()
             if hparams['use_spk_id']:

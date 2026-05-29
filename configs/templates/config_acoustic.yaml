@@ -52,7 +52,12 @@ use_energy_embed: false
 use_breathiness_embed: false
 use_voicing_embed: false
 use_tension_embed: false
+use_mouth_opening_embed: false
 voicing_domain: 'mulaw'
+
+# When use_mouth_opening_embed is true, please make sure the BiLSTM curve estimator
+# checkpoint (and its sibling config.yaml) exists at the path below.
+mouth_opening_estimator_ckpt: 'checkpoints/mouth_opening/model.ckpt'
 
 use_key_shift_embed: true
 use_speed_embed: true

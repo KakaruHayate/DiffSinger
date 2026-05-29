@@ -54,6 +54,7 @@ class FastSpeech2Acoustic(nn.Module):
         self.use_breathiness_embed = hparams.get('use_breathiness_embed', False)
         self.use_voicing_embed = hparams.get('use_voicing_embed', False)
         self.use_tension_embed = hparams.get('use_tension_embed', False)
+        self.use_mouth_opening_embed = hparams.get('use_mouth_opening_embed', False)
         if self.use_energy_embed:
             self.variance_embed_list.append('energy')
         if self.use_breathiness_embed:
@@ -62,6 +63,8 @@ class FastSpeech2Acoustic(nn.Module):
             self.variance_embed_list.append('voicing')
         if self.use_tension_embed:
             self.variance_embed_list.append('tension')
+        if self.use_mouth_opening_embed:
+            self.variance_embed_list.append('mouth_opening')
 
         self.use_variance_embeds = len(self.variance_embed_list) > 0
         if self.use_variance_embeds:
@@ -77,6 +80,7 @@ class FastSpeech2Acoustic(nn.Module):
                 'breathiness': 1. / 96,
                 'voicing': 1. / 96,
                 'tension': 0.1,
+                'mouth_opening': 1.,
                 'key_shift': 1. / 12,
                 'speed': 1.
             }
@@ -86,6 +90,7 @@ class FastSpeech2Acoustic(nn.Module):
                 'breathiness': 1.,
                 'voicing': 1.,
                 'tension': 1.,
+                'mouth_opening': 1.,
                 'key_shift': 1.,
                 'speed': 1.
             }
