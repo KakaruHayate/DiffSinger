@@ -143,7 +143,6 @@ class DiffSingerAcousticExporter(BaseExporter):
             }
         dsconfig['use_key_shift_embed'] = self.expose_gender
         dsconfig['use_speed_embed'] = self.expose_velocity
-        dsconfig['use_shift_mouth_opening_embed'] = hparams.get('use_shift_mouth_opening_embed', False)
         for variance in VARIANCE_CHECKLIST:
             dsconfig[f'use_{variance}_embed'] = (variance in self.model.fs2.variance_embed_list)
         # sampling acceleration and shallow diffusion
@@ -225,15 +224,6 @@ class DiffSingerAcousticExporter(BaseExporter):
             dynamix_axes['languages'] = {
                 1: 'n_tokens'
             }
-        
-        if hparams.get('use_shift_mouth_opening_embed', False):
-            # 构造 shape 为 [1, n_frames] 的控制张量，默认值为 0.0 (无偏置)
-            kwargs['shift_mouth_opening'] = torch.zeros((1, n_frames), dtype=torch.float32, device=self.device)
-            input_names.append('shift_mouth_opening')
-            dynamix_axes['shift_mouth_opening'] = {
-                1: 'n_frames'  # 允许帧数动态变化
-            }
-        
         dynamix_axes['condition'] = {
             1: 'n_frames'
         }

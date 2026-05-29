@@ -12,7 +12,6 @@ from modules.commons.common_layers import AdamWLinear, AdamWConv1d
 
 def gram_newton_schulz(G: Tensor, steps: int, reset_iterations: List[int]=[2]) -> Tensor:
     """
-    https://github.com/Dao-AILab/gram-newton-schulz
     Gram Newton-Schulz iteration to compute the orthogonalization of G.
     Mathematically identical to standard Newton-Schulz but computes iterating 
     on the smaller NxN Gram matrix to save up to 50% FLOPs.
@@ -22,7 +21,7 @@ def gram_newton_schulz(G: Tensor, steps: int, reset_iterations: List[int]=[2]) -
     dtype = G.dtype
 
     X = G.to(torch.float32)
-    X = F.normalize(X, p=2.0, dim=(-2, -1), eps=1e-7)
+    X = F.normalize(X, p=2.0, dim=(-2, -1))
     should_transpose = X.size(-2) > X.size(-1)
     if should_transpose:
         X = X.mT

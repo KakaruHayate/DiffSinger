@@ -31,8 +31,6 @@ class AcousticDataset(BaseDataset):
             self.required_variances['voicing'] = 0.0
         if hparams['use_tension_embed']:
             self.required_variances['tension'] = 0.0
-        if hparams.get('use_shift_mouth_opening_embed', False):
-            self.required_variances['mouth_opening'] = hparams['opec_min']
 
         self.need_key_shift = hparams['use_key_shift_embed']
         self.need_speed = hparams['use_speed_embed']
@@ -94,11 +92,6 @@ class AcousticTask(BaseTask):
             self.required_variances.append('voicing')
         if hparams['use_tension_embed']:
             self.required_variances.append('tension')
-            
-        self.use_shift_mouth_opening_embed = hparams.get('use_shift_mouth_opening_embed', False)
-        if self.use_shift_mouth_opening_embed:
-            self.required_variances.append('mouth_opening')
-        
         super()._finish_init()
 
     def _build_model(self):
@@ -113,11 +106,6 @@ class AcousticTask(BaseTask):
             self.aux_mel_loss = build_aux_loss(self.shallow_args['aux_decoder_arch'])
             self.lambda_aux_mel_loss = hparams['lambda_aux_mel_loss']
             self.register_validation_loss('aux_mel_loss')
-            
-        if getattr(self, 'use_shift_mouth_opening_embed', False):
-            self.shm_mel_loss = build_aux_loss(self.shallow_args.get('aux_decoder_arch', 'conv7w8'))
-            self.register_validation_loss('shm_mel_loss')
-            
         if self.diffusion_type == 'ddpm':
             self.mel_loss = DiffusionLoss(loss_type=hparams['main_loss_type'])
         elif self.diffusion_type == 'reflow':
@@ -152,8 +140,7 @@ class AcousticTask(BaseTask):
             txt_tokens, mel2ph=mel2ph, f0=f0, **variances,
             key_shift=key_shift, speed=speed,
             spk_embed_id=spk_embed_id, languages=languages,
-            gt_mel=target, infer=infer,
-            global_step=self.global_step
+            gt_mel=target, infer=infer
         )
 
         if infer:
@@ -166,16 +153,6 @@ class AcousticTask(BaseTask):
                 norm_gt = self.model.aux_decoder.norm_spec(target)
                 aux_mel_loss = self.lambda_aux_mel_loss * self.aux_mel_loss(aux_out, norm_gt)
                 losses['aux_mel_loss'] = aux_mel_loss
-
-            if getattr(output, 'shm_out', None) is not None:
-                shm_out = output.shm_out
-                # shm_decoder 在 toplevel 初始化，直接调用其 norm_spec
-                norm_gt_shm = self.model.shm_decoder.norm_spec(target) 
-                
-                # 为了保持代码简洁，权重直接复用 lambda_aux_mel_loss
-                # 因为它们都是在预测浅扩散之前的起点 Mel，难度和量级是一致的
-                shm_mel_loss = self.lambda_aux_mel_loss * self.shm_mel_loss(shm_out, norm_gt_shm)
-                losses['shm_mel_loss'] = shm_mel_loss
 
             non_padding = (mel2ph > 0).unsqueeze(-1).float()
             if output.diff_out is not None:

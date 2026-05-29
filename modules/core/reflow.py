@@ -40,13 +40,11 @@ class RectifiedFlow(nn.Module):
 
         return v_pred, x_end - x_start
 
-    def forward(self, condition, gt_spec=None, src_spec=None, delta_spec=None, infer=True):
+    def forward(self, condition, gt_spec=None, src_spec=None, infer=True):
         cond = condition.transpose(1, 2)
         b, device = condition.shape[0], condition.device
 
         if not infer:
-            if delta_spec is not None:
-                gt_spec = gt_spec + delta_spec
             # gt_spec: [B, T, M] or [B, F, T, M]
             spec = self.norm_spec(gt_spec).transpose(-2, -1)  # [B, M, T] or [B, F, M, T]
             if self.num_feats == 1:
