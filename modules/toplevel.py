@@ -84,10 +84,12 @@ class DiffSingerAcoustic(CategorizedModule, ParameterAdaptorModule):
 
     def forward(
             self, txt_tokens, mel2ph, f0, key_shift=None, speed=None,
+            shift_mouth_opening=None,
             spk_embed_id=None, languages=None, gt_mel=None, infer=True, **kwargs
     ) -> ShallowDiffusionOutput:
         condition = self.fs2(
             txt_tokens, mel2ph, f0, key_shift=key_shift, speed=speed,
+            shift_mouth_opening=shift_mouth_opening,
             spk_embed_id=spk_embed_id, languages=languages,
             **kwargs
         )

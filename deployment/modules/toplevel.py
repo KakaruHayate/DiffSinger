@@ -66,12 +66,15 @@ class DiffSingerAcousticONNX(DiffSingerAcoustic):
             variances: dict,
             gender: Tensor = None,
             velocity: Tensor = None,
+            shift_mouth_opening: Tensor = None,
             spk_embed: Tensor = None,
             languages: Tensor = None
     ):
         condition = self.fs2(
             tokens, durations, f0, variances=variances,
-            gender=gender, velocity=velocity, spk_embed=spk_embed,
+            gender=gender, velocity=velocity,
+            shift_mouth_opening=shift_mouth_opening,
+            spk_embed=spk_embed,
             languages=languages
         )
         if self.use_shallow_diffusion:

@@ -62,6 +62,23 @@ mouth_opening_estimator_ckpt: 'checkpoints/mouth_opening/model.ckpt'
 use_key_shift_embed: true
 use_speed_embed: true
 
+# shift_mouth_opening_embed: a frame-level relative offset alpha in [-1, 1] that
+# distillation-trains the acoustic model to shift the mouth_opening curve. Mutually
+# exclusive with use_mouth_opening_embed. When enabled, you MUST point
+# shift_mouth_opening_args.teacher_ckpt_path to a frozen acoustic checkpoint that
+# was trained with use_mouth_opening_embed=true and ALL other use_*_embed=false.
+# The teacher must share the same dictionaries / lang / spk space and identical
+# mel features (sample rate, hop/win/fft size, mel bins, fmin/fmax, mel_base);
+# its architecture (hidden size, layers, diffusion_type, etc.) may differ.
+use_shift_mouth_opening_embed: false
+shift_mouth_opening_args:
+  teacher_ckpt_path: ''
+  alpha_sigma: 0.5            # truncated normal stddev for alpha sampling
+  replacement_prob: 0.25      # probability that a sample's loss target is the teacher's shifted mel
+  opec_min: 0.06
+  opec_max: 0.8
+  teacher_use_amp: false      # wrap teacher forward in fp16 autocast to speed up sampling
+
 augmentation_args:
   random_pitch_shifting:
     enabled: true

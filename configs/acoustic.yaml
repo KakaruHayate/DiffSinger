@@ -64,6 +64,15 @@ use_mouth_opening_embed: false
 use_key_shift_embed: false
 use_speed_embed: false
 
+use_shift_mouth_opening_embed: false
+shift_mouth_opening_args:
+  teacher_ckpt_path: ''
+  alpha_sigma: 0.5
+  replacement_prob: 0.25
+  opec_min: 0.06
+  opec_max: 0.8
+  teacher_use_amp: false
+
 diffusion_type: reflow
 time_scale_factor: 1000
 timesteps: 1000

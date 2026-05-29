@@ -68,7 +68,10 @@ class AcousticBinarizer(BaseBinarizer):
         self.need_breathiness = hparams['use_breathiness_embed']
         self.need_voicing = hparams['use_voicing_embed']
         self.need_tension = hparams['use_tension_embed']
-        self.need_mouth_opening = hparams.get('use_mouth_opening_embed', False)
+        self.need_mouth_opening = (
+            hparams.get('use_mouth_opening_embed', False)
+            or hparams.get('use_shift_mouth_opening_embed', False)
+        )
         assert hparams['mel_base'] == 'e', (
             "Mel base must be set to \'e\' according to 2nd stage of the migration plan. "
             "See https://github.com/openvpi/DiffSinger/releases/tag/v2.3.0 for more details."
