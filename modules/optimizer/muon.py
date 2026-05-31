@@ -117,10 +117,16 @@ class Muon(torch.optim.Optimizer):
         momentum: The momentum used by the internal SGD.
         nesterov: Whether to use Nesterov-style momentum in the internal SGD. (recommended)
         ns_steps: The number of Newton-Schulz iteration steps to use.
+        use_nc: Whether to use Normalized Correction before Newton-Schulz.
+        nc_steps: The number of Normalized Correction iterations to use.
+        use_normuon: Whether to apply NorMuon momentum scaling mechanisms.
+        normuon_beta2: The beta2 value used for NorMuon second momentum.
     """
 
-    def __init__(self, params, lr=5e-4, weight_decay=0.1, momentum=0.95, nesterov=True, ns_steps=5):
-        defaults = dict(lr=lr, weight_decay=weight_decay, momentum=momentum, nesterov=nesterov, ns_steps=ns_steps)
+    def __init__(self, params, lr=5e-4, weight_decay=0.1, momentum=0.95, nesterov=True, ns_steps=5, 
+                 use_nc=False, nc_steps=5, use_normuon=False, normuon_beta2=0.95):
+        defaults = dict(lr=lr, weight_decay=weight_decay, momentum=momentum, nesterov=nesterov, ns_steps=ns_steps,
+                        use_nc=use_nc, nc_steps=nc_steps, use_normuon=use_normuon, normuon_beta2=normuon_beta2)
         super().__init__(params, defaults)
     
     @torch.no_grad()
@@ -132,12 +138,23 @@ class Muon(torch.optim.Optimizer):
                 state = self.state[p]
                 if "momentum_buffer" not in state:
                     state["momentum_buffer"] = torch.zeros_like(g)
+                
+                # --- Added: NorMuon second momentum initialization ---
+                if group["use_normuon"] and "second_momentum_buffer" not in state:
+                    # Initialize with shape [dim1, 1] to match the batched view spatial mean
+                    dim1 = p.size(0)
+                    state["second_momentum_buffer"] = torch.zeros(dim1, 1, dtype=p.dtype, device=p.device)
+                    
                 key = (p.shape, p.device, p.dtype)
                 if key not in shape_groups:
-                    shape_groups[key] = {"params": [], "grads": [], "buffers": []}
+                    shape_groups[key] = {"params": [], "grads": [], "buffers": [], "second_buffers": []}
                 shape_groups[key]["params"].append(p)
                 shape_groups[key]["grads"].append(g)
                 shape_groups[key]["buffers"].append(state["momentum_buffer"])
+                
+                if group["use_normuon"]:
+                    shape_groups[key]["second_buffers"].append(state["second_momentum_buffer"])
+
             for key in shape_groups:
                 group_data = shape_groups[key]
                 p, g, buf, m = group_data["params"], group_data["grads"], group_data["buffers"], group["momentum"]
@@ -150,8 +167,38 @@ class Muon(torch.optim.Optimizer):
                 original_shape = g.shape
                 if g.ndim >= 4:  # for the case of conv filters
                     g = g.view(g.size(0), g.size(1), -1)
+                
+                # --- Added: Normalized Correction (NC) before Newton-Schulz ---
+                if group["use_nc"]:
+                    for _ in range(group["nc_steps"]):
+                        r_norm = g.norm(dim=-1, keepdim=True)
+                        c_norm = g.norm(dim=-2, keepdim=True)
+                        g = g / torch.sqrt(torch.clamp(r_norm * c_norm, min=1e-12))
+                
                 g = gram_newton_schulz(g, steps=group["ns_steps"])
                 
+                # --- Added: NorMuon Mechanism scaling after Newton-Schulz ---
+                if group["use_normuon"]:
+                    vnorm = g.norm(dim=(-2, -1), keepdim=True)
+                    v_mean = torch.mean(g * g, dim=-1, keepdim=True)
+                    
+                    # Update second momentum
+                    buf2 = group_data["second_buffers"]
+                    buf2_stacked = torch.stack(buf2)
+                    buf2_stacked.lerp_(v_mean, 1 - group["normuon_beta2"])
+                    
+                    # Apply step size
+                    step_size = 1 / buf2_stacked.sqrt().add_(1e-10)
+                    g.mul_(step_size)
+                    
+                    # Copy updated buffers back to state in-place
+                    for b, b_new in zip(buf2, buf2_stacked.unbind(0)):
+                        b.copy_(b_new)
+                        
+                    # Maintain the update norm the same as pre-normalization
+                    vnorm_new = g.norm(dim=(-2, -1), keepdim=True)
+                    g.mul_(vnorm / (vnorm_new.add_(1e-10)))
+
                 if group["weight_decay"] > 0:
                     torch._foreach_mul_(p, 1 - group["lr"] * group["weight_decay"])
                 torch._foreach_add_(p, g.view(original_shape).unbind(0), alpha=-group["lr"] * max(g[0].size()) ** 0.5)
