@@ -19,7 +19,7 @@ resampy
 scipy>=1.10.0
 tensorboard
 tensorboardX
-torch==1.13.1
+torch==2.12.1
 torchvision==0.14.1
 torchaudio==0.13.1
 torchmetrics
