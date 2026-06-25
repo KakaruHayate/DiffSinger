@@ -129,6 +129,12 @@ def model_add_prefixes(
     initializers = set()
     value_infos = set()
 
+    # Collect graph I/O names at the top level. These correspond to the
+    # interface between sub-models connected by merge_models io_map and
+    # must never be prefixed, otherwise the merged graph would have
+    # disconnected nodes.
+    graph_io_names = {i.name for i in model.graph.input} | {o.name for o in model.graph.output}
+
     def _record_initializers_and_value_infos_recursive(subgraph):
         # Record names in current graph
         for initializer in subgraph.initializer:
@@ -136,6 +142,8 @@ def model_add_prefixes(
                 continue
             initializers.add(initializer.name)
         for value_info in subgraph.value_info:
+            if value_info.name in graph_io_names:
+                continue
             if ignored_pattern is not None and re.match(ignored_pattern, value_info.name):
                 continue
             value_infos.add(value_info.name)
@@ -162,6 +170,9 @@ def model_add_prefixes(
                 initializer.name = new_name
 
         for value_info in subgraph.value_info:
+            # Graph I/O names and their symbolic dims must stay untouched
+            if value_info.name in graph_io_names:
+                continue
             if dim_prefix is not None:
                 for dim in value_info.type.tensor_type.shape.dim:
                     if dim.dim_param is None or dim.dim_param == '' or \
