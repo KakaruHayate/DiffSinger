@@ -96,12 +96,13 @@ class AcousticTask(BaseTask):
 
         # ── Fuse LYNXNet2 backbone kernels (in-place) ──
         if hparams.get('use_fused_kernels', False):
-            from modules.kernels.integration import patch_lynxnet2_model
+            from modules.kernels.integration import patch_diffusion_module
             from lightning.pytorch.utilities.rank_zero import rank_zero_info
-            backbone = self.model.diffusion.denoise_fn
-            glu_type = hparams['backbone_args'].get('glu_type', 'atanglu')
-            patch_lynxnet2_model(backbone, glu_type=glu_type)
-            rank_zero_info('Fused LYNXNet2 kernels enabled (glu_type=%s)', glu_type)
+            n = patch_diffusion_module(
+                self.model.diffusion,
+                glu_type=hparams['backbone_args'].get('glu_type', 'atanglu'),
+            )
+            rank_zero_info('Fused kernels: patched %d LYNXNet2 blocks', n)
 
     def _build_model(self):
         return DiffSingerAcoustic(

@@ -115,6 +115,16 @@ class VarianceTask(BaseTask):
         self.lambda_var_loss = hparams['lambda_var_loss']
         super()._finish_init()
 
+        # ── Fuse LYNXNet2 backbone kernels (in-place) ──
+        if hparams.get('use_fused_kernels', False):
+            from modules.kernels.integration import patch_variance_model
+            from lightning.pytorch.utilities.rank_zero import rank_zero_info
+            n = patch_variance_model(
+                self.model,
+                glu_type=hparams.get('backbone_args', {}).get('glu_type', 'atanglu'),
+            )
+            rank_zero_info('Fused kernels: patched %d LYNXNet2 blocks in variance model', n)
+
     def _build_model(self):
         return DiffSingerVariance(
             vocab_size=len(self.phoneme_dictionary),

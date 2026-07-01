@@ -85,10 +85,89 @@ def patch_lynxnet2_model(model, glu_type='atanglu'):
         glu_type: 'atanglu' or 'swiglu'
     """
     from modules.backbones.lynxnet2 import LYNXNet2Block
+    patched = 0
     for i, layer in enumerate(model.residual_layers):
         if isinstance(layer, LYNXNet2Block):
             model.residual_layers[i] = wrap_lynxnet2_block(layer, glu_type=glu_type)
-            print(f"  Patched layer {i}: fused Linear+GLU")
+            patched += 1
+    return patched
+
+
+# ---------------------------------------------------------------------------
+# Safe patching — handles both DDPM (denoise_fn) and ReFlow (velocity_fn),
+# and checks that the backbone is actually a LYNXNet2 before patching.
+# ---------------------------------------------------------------------------
+
+def _patch_backbone_fn(backbone_fn, glu_type):
+    """Patch a single backbone function/module if it's a LYNXNet2.
+
+    Args:
+        backbone_fn: The backbone module (e.g., diffusion.denoise_fn)
+        glu_type: 'atanglu' or 'swiglu'
+
+    Returns:
+        Number of blocks patched (0 if not a LYNXNet2).
+    """
+    from modules.backbones.lynxnet2 import LYNXNet2
+    if not isinstance(backbone_fn, LYNXNet2):
+        return 0
+    return patch_lynxnet2_model(backbone_fn, glu_type=glu_type)
+
+
+def _try_patch(module, attr, glu_type):
+    """Try to patch backbone at module.attr if it's a LYNXNet2. Safe to call
+    even if attr doesn't exist — returns 0 silently."""
+    backbone = getattr(module, attr, None)
+    if backbone is None:
+        return 0
+    return _patch_backbone_fn(backbone, glu_type)
+
+
+def patch_diffusion_module(diffusion, glu_type='atanglu'):
+    """Patch a diffusion module's backbone (DDPM or ReFlow).
+
+    Handles both:
+      GaussianDiffusion / PitchDiffusion / MultiVarianceDiffusion → .denoise_fn
+      RectifiedFlow / PitchRectifiedFlow / MultiVarianceRectifiedFlow → .velocity_fn
+
+    Returns:
+        Number of blocks patched.
+    """
+    return (
+        _try_patch(diffusion, 'denoise_fn', glu_type) +
+        _try_patch(diffusion, 'velocity_fn', glu_type)
+    )
+
+
+def patch_acoustic_model(model, glu_type='atanglu'):
+    """Patch the LYNXNet2 backbone in a DiffSingerAcoustic.
+
+    The backbone is at model.diffusion.denoise_fn (DDPM) or
+    model.diffusion.velocity_fn (ReFlow).
+
+    Returns:
+        Number of blocks patched.
+    """
+    if hasattr(model, 'diffusion') and model.diffusion is not None:
+        return patch_diffusion_module(model.diffusion, glu_type=glu_type)
+    return 0
+
+
+def patch_variance_model(model, glu_type='atanglu'):
+    """Patch all LYNXNet2 backbones in a DiffSingerVariance.
+
+    The variance model has separate predictors for pitch and other
+    variances, each with their own backbone. Handles both DDPM and ReFlow.
+
+    Returns:
+        Number of blocks patched.
+    """
+    total = 0
+    for predictor_attr in ['pitch_predictor', 'variance_predictor']:
+        predictor = getattr(model, predictor_attr, None)
+        if predictor is not None:
+            total += patch_diffusion_module(predictor, glu_type=glu_type)
+    return total
 
 
 # ---------------------------------------------------------------------------
