@@ -177,28 +177,24 @@ def patch_variance_model(model, glu_type='atanglu'):
 # Warmup — trigger Triton autotune before training starts
 # ---------------------------------------------------------------------------
 
-def warmup_fused_backbone(backbone, glu_type='softsign_glu', num_channels=1024, M=50000):
+def warmup_fused_backbone(backbone, glu_type='atanglu', num_channels=1024):
     """Run one dummy forward+backward to trigger Triton autotune compilation
     for all fused kernels (fwd + bwd + elem). Call after patching, before
     the first real training step.
-
-    Uses M matching max_batch_frames so the compiled kernel cache is hit
-    by the first real training step.
 
     Autotune results are cached on disk by Triton, so this only has an
     effect on the first run with a given kernel / shape / GPU combination.
 
     Args:
         backbone: LYNXNet2 model (already patched).
-        glu_type: 'softsign_glu' (default, only supported option).
+        glu_type: 'atanglu', 'softsign_glu', or 'swiglu'.
         num_channels: backbone width (1024 for acoustic, 512/384 for variance).
-        M: number of frames for warmup (default 50000).
     """
     device = next(backbone.parameters()).device
     dtype = next(backbone.parameters()).dtype
 
-    B = max(1, M // 8000)
-    T = M // B
+    # spec shape: [B, n_feats, in_dims, T]
+    B, T = 4, 500
     spec = torch.randn(B, backbone.n_feats, backbone.in_dims, T,
                        device=device, dtype=dtype, requires_grad=True)
     t = torch.randint(0, 1000, (B,), device=device).float()
