@@ -478,7 +478,11 @@ def fused_linear_atan_glu(x: torch.Tensor, weight: torch.Tensor, bias: torch.Ten
     """
     assert weight.shape[0] == 2 * weight.shape[1], \
         f"Expected weight shape [2*K, K], got {weight.shape}"
-    # 确保内存连续，避免隐式拷贝
+    # Match dtype to input (handles 16-mixed precision)
+    if weight.dtype != x.dtype:
+        weight = weight.to(x.dtype)
+    if bias.dtype != x.dtype:
+        bias = bias.to(x.dtype)
     if not weight.is_contiguous():
         weight = weight.contiguous()
     if not bias.is_contiguous():

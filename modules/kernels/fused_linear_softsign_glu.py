@@ -397,6 +397,12 @@ def fused_linear_softsign_glu(x, weight, bias):
     """
     assert weight.shape[0] == 2 * weight.shape[1], \
         f"Expected [2*K, K], got {weight.shape}"
+    # Match weight/bias dtype to input (handles 16-mixed precision where
+    # weights are fp32 but activations are autocast to fp16)
+    if weight.dtype != x.dtype:
+        weight = weight.to(x.dtype)
+    if bias.dtype != x.dtype:
+        bias = bias.to(x.dtype)
     if not weight.is_contiguous():
         weight = weight.contiguous()
     if not bias.is_contiguous():
