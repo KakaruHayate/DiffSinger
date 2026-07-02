@@ -194,8 +194,9 @@ def _fused_linear_softsign_glu_bwd_kernel(
         left_f32 = left.to(tl.float32)
         abs_gate = tl.abs(gate_f32)
         denom = 1.0 / (1.0 + abs_gate)         # 1 / (1+|g|)
+        denom2 = denom * denom               # 1 / (1+|g|)^2
         grad_left_pre = grad_y * (gate_f32 * denom)
-        grad_gate = grad_y * (left_f32 * denom * denom)
+        grad_gate = grad_y * (left_f32 * denom2)
 
         wl = tl.load(
             w_left_ptr + n_offs[:, None] * stride_wl_n + offs_k[None, :] * stride_wl_k,
@@ -266,11 +267,12 @@ def _softsign_glu_bwd_elem_kernel(
     left_f32 = left.to(tl.float32)
     abs_gate = tl.abs(gate_f32)
     denom = 1.0 / (1.0 + abs_gate)
+    denom2 = denom * denom
 
     tl.store(glp_ptr + offs_m[:, None] * stride_glp_b + offs_k[None, :] * stride_glp_n,
              gy * (gate_f32 * denom), mask=m_mask & k_mask)
     tl.store(gg_ptr + offs_m[:, None] * stride_gg_b + offs_k[None, :] * stride_gg_n,
-             gy * (left_f32 * denom * denom), mask=m_mask & k_mask)
+             gy * (left_f32 * denom2), mask=m_mask & k_mask)
 
 
 # ---------------------------------------------------------------------------
