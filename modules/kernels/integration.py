@@ -24,6 +24,7 @@ import torch
 import torch.nn as nn
 
 from modules.kernels.fused_linear_glu import fused_linear_atan_glu, fused_linear_swiglu
+from modules.kernels.fused_linear_softsign_glu import fused_linear_softsign_glu
 
 
 def wrap_lynxnet2_block(block, glu_type='atanglu'):
@@ -34,7 +35,7 @@ def wrap_lynxnet2_block(block, glu_type='atanglu'):
 
     Args:
         block: LYNXNet2Block instance
-        glu_type: 'atanglu' or 'swiglu'
+        glu_type: 'atanglu', 'softsign_glu', or 'swiglu'
 
     Returns:
         The same block with patched forward method.
@@ -44,6 +45,8 @@ def wrap_lynxnet2_block(block, glu_type='atanglu'):
 
     if glu_type == 'atanglu':
         glu_fn = lambda x, w, b: fused_linear_atan_glu(x, w, b)
+    elif glu_type == 'softsign_glu':
+        glu_fn = lambda x, w, b: fused_linear_softsign_glu(x, w, b)
     else:
         glu_fn = lambda x, w, b: fused_linear_swiglu(x, w, b)
 
@@ -82,7 +85,7 @@ def patch_lynxnet2_model(model, glu_type='atanglu'):
 
     Args:
         model: LYNXNet2 instance
-        glu_type: 'atanglu' or 'swiglu'
+        glu_type: 'atanglu', 'softsign_glu', or 'swiglu'
     """
     from modules.backbones.lynxnet2 import LYNXNet2Block
     patched = 0
