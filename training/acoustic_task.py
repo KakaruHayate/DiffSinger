@@ -109,12 +109,10 @@ class AcousticTask(BaseTask):
             )
             rank_zero_info('Fused kernels: patched %d LYNXNet2 blocks, warming up...', n)
             if n > 0:
-                backbone = self.model.diffusion.denoise_fn or self.model.diffusion.velocity_fn
-                warmup_fused_backbone(
-                    backbone,
-                    glu_type=hparams['backbone_args'].get('glu_type', 'atanglu'),
-                    num_channels=hparams['backbone_args'].get('num_channels', 1024),
-                )
+                backbone = getattr(self.model.diffusion, 'denoise_fn',
+                                   getattr(self.model.diffusion, 'velocity_fn', None))
+                if backbone is not None:
+                    warmup_fused_backbone(backbone)
                 rank_zero_info('Fused kernels: autotune complete')
 
     def _build_model(self):

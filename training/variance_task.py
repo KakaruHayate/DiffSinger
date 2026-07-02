@@ -135,10 +135,9 @@ class VarianceTask(BaseTask):
                     predictor = getattr(self.model, predictor_attr, None)
                     if predictor is None:
                         continue
-                    backbone = getattr(predictor, 'denoise_fn',
-                                       getattr(predictor, 'velocity_fn', None))
+                    backbone = getattr(predictor, 'denoise_fn', None) or getattr(predictor, 'velocity_fn', None)
                     if backbone is not None:
-                        warmup_fused_backbone(backbone, glu_type=glu_type_patched)
+                        warmup_fused_backbone(backbone)
                 rank_zero_info('Fused kernels: autotune complete')
 
     def _build_model(self):
