@@ -18,6 +18,11 @@ from utils.plot import dur_to_figure, pitch_note_to_figure, curve_to_figure
 
 matplotlib.use('Agg')
 
+# Enable TF32 for cuBLAS and cuDNN on Ampere+ GPUs (RTX 4090, 5090, etc.)
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+torch.set_float32_matmul_precision("medium")
+
 
 class VarianceDataset(BaseDataset):
     def __init__(self, prefix, preload=False):
