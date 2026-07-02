@@ -200,11 +200,18 @@ def warmup_fused_backbone(backbone, glu_type='atanglu', num_channels=1024):
     t = torch.randint(0, 1000, (B,), device=device).float()
     cond = torch.randn(B, 384, T, device=device, dtype=dtype)
 
-    _ = backbone(spec, t, cond=cond)
-    _.sum().backward()
-    for p in backbone.parameters():
-        if p.grad is not None:
-            p.grad = None
+    try:
+        out = backbone(spec, t, cond=cond)
+        out.sum().backward()
+    except Exception as e:
+        # Autotune failure should not crash training — Triton cache
+        # can be built on the first real step instead.
+        import warnings
+        warnings.warn(f'Fused kernel warmup skipped ({e})')
+    finally:
+        for p in backbone.parameters():
+            if p.grad is not None:
+                p.grad = None
 
 
 # ---------------------------------------------------------------------------
