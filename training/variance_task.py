@@ -117,13 +117,24 @@ class VarianceTask(BaseTask):
 
         # ── Fuse LYNXNet2 backbone kernels (in-place) ──
         if hparams.get('use_fused_kernels', False):
-            from modules.kernels.integration import patch_variance_model
+            from modules.kernels.integration import patch_variance_model, warmup_fused_backbone
             from lightning.pytorch.utilities.rank_zero import rank_zero_info
             n = patch_variance_model(
                 self.model,
                 glu_type=hparams.get('backbone_args', {}).get('glu_type', 'atanglu'),
             )
-            rank_zero_info('Fused kernels: patched %d LYNXNet2 blocks in variance model', n)
+            rank_zero_info('Fused kernels: patched %d LYNXNet2 blocks in variance model, warming up...', n)
+            if n > 0:
+                glu_type_patched = hparams.get('backbone_args', {}).get('glu_type', 'atanglu')
+                for predictor_attr in ['pitch_predictor', 'variance_predictor']:
+                    predictor = getattr(self.model, predictor_attr, None)
+                    if predictor is None:
+                        continue
+                    backbone = getattr(predictor, 'denoise_fn',
+                                       getattr(predictor, 'velocity_fn', None))
+                    if backbone is not None:
+                        warmup_fused_backbone(backbone, glu_type=glu_type_patched)
+                rank_zero_info('Fused kernels: autotune complete')
 
     def _build_model(self):
         return DiffSingerVariance(
