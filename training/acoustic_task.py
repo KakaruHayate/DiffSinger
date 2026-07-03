@@ -320,28 +320,32 @@ class AcousticTask(BaseTask):
 
         shift_mouth_opening = None
         if self.use_shift_mouth_opening and not infer:
-            B = target.shape[0]
-            device = target.device
-            # sample alpha from truncated normal
-            alpha = sample_truncated_normal(
-                B, self.smo_alpha_sigma,
-                lo=-1.0, hi=1.0,
-                device=device,
-                generator=None
-            ).to(target.dtype)
-            # decide which items are replaced by teacher output
-            replace_mask = torch.rand(B, device=device) < self.smo_replacement_prob
-            # build frame-level shift_mouth_opening tensor
-            mouth_opening_gt = sample['mouth_opening_gt'].to(device=device, dtype=target.dtype)
-            shift_mouth_opening = alpha[:, None].expand_as(target[:, :, 0])
-            shifted_mouth_opening = calculate_shifted_opec(
-                mouth_opening_gt, shift_mouth_opening,
-                o_min=self.smo_o_min, o_max=self.smo_o_max,
-            )
-            # teacher replacement of GT mel target
-            new_target = self._teacher_forward(sample, shifted_mouth_opening, replace_mask)
-            if new_target is not None:
-                target = new_target
+            # Batch-level gate: skip the entire distillation pipeline when
+            # the batch rand misses. Keeps expected number of replaced
+            # samples the same while avoiding per-step overhead when no
+            # teacher forward is needed.
+            if torch.rand(1, device=target.device).item() < self.smo_replacement_prob:
+                B = target.shape[0]
+                device = target.device
+                # Sample alpha from truncated normal (O(1) inverse-CDF)
+                alpha = sample_truncated_normal(
+                    B, self.smo_alpha_sigma,
+                    lo=-1.0, hi=1.0,
+                    device=device,
+                ).to(target.dtype)
+                # Per-sample mask so teacher only runs on replaced items
+                replace_mask = torch.rand(B, device=device) < self.smo_replacement_prob
+                # Frame-level shift_mouth_opening embedding
+                mouth_opening_gt = sample['mouth_opening_gt'].to(device=device, dtype=target.dtype)
+                shift_mouth_opening = alpha[:, None].expand_as(target[:, :, 0])
+                shifted_mouth_opening = calculate_shifted_opec(
+                    mouth_opening_gt, shift_mouth_opening,
+                    o_min=self.smo_o_min, o_max=self.smo_o_max,
+                )
+                # Teacher replaces GT mel for the chosen items
+                new_target = self._teacher_forward(sample, shifted_mouth_opening, replace_mask)
+                if new_target is not None:
+                    target = new_target
         output: ShallowDiffusionOutput = self.model(
             txt_tokens, mel2ph=mel2ph, f0=f0, **variances,
             key_shift=key_shift, speed=speed,
