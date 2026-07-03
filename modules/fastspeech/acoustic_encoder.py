@@ -53,6 +53,7 @@ class FastSpeech2Acoustic(nn.Module):
         self.use_breathiness_embed = hparams.get('use_breathiness_embed', False)
         self.use_voicing_embed = hparams.get('use_voicing_embed', False)
         self.use_tension_embed = hparams.get('use_tension_embed', False)
+        self.use_mouth_opening_embed = hparams.get('use_mouth_opening_embed', False)
         if self.use_energy_embed:
             self.variance_embed_list.append('energy')
         if self.use_breathiness_embed:
@@ -61,6 +62,8 @@ class FastSpeech2Acoustic(nn.Module):
             self.variance_embed_list.append('voicing')
         if self.use_tension_embed:
             self.variance_embed_list.append('tension')
+        if self.use_mouth_opening_embed:
+            self.variance_embed_list.append('mouth_opening')
 
         self.use_variance_embeds = len(self.variance_embed_list) > 0
         if self.use_variance_embeds:
@@ -76,6 +79,8 @@ class FastSpeech2Acoustic(nn.Module):
                 'breathiness': 1. / 96,
                 'voicing': 1. / 96,
                 'tension': 0.1,  # 1 / 10; tension logits are roughly [-10, 10]
+                'mouth_opening': 1.,
+                'shift_mouth_opening': 1.,
                 'key_shift': 1. / 12,  # one octave — max key shift in most editors
                 'speed': 1.
             }
@@ -85,6 +90,8 @@ class FastSpeech2Acoustic(nn.Module):
                 'breathiness': 1.,
                 'voicing': 1.,
                 'tension': 1.,
+                'mouth_opening': 1.,
+                'shift_mouth_opening': 1.,
                 'key_shift': 1.,
                 'speed': 1.
             }
@@ -97,11 +104,18 @@ class FastSpeech2Acoustic(nn.Module):
         if self.use_speed_embed:
             self.speed_embed = AdamWLinear(1, hparams['hidden_size'])
 
+        self.use_shift_mouth_opening_embed = hparams.get('use_shift_mouth_opening_embed', False)
+        if self.use_shift_mouth_opening_embed:
+            assert not self.use_mouth_opening_embed, \
+                'use_shift_mouth_opening_embed 与 use_mouth_opening_embed 互斥，不能同时启用'
+            self.shift_mouth_opening_embed = AdamWLinear(1, hparams['hidden_size'])
+
         self.use_spk_id = hparams['use_spk_id']
         if self.use_spk_id:
             self.spk_embed = Embedding(hparams['num_spk'], hparams['hidden_size'])
 
-    def forward_variance_embedding(self, condition, key_shift=None, speed=None, **variances):
+    def forward_variance_embedding(self, condition, key_shift=None, speed=None,
+                                   shift_mouth_opening=None, **variances):
         if self.use_variance_embeds:
             variance_embeds = torch.stack([
                 self.variance_embeds[v_name](variances[v_name][:, :, None] * self.variance_scaling_factor[v_name])
@@ -116,6 +130,14 @@ class FastSpeech2Acoustic(nn.Module):
         if self.use_speed_embed:
             speed_embed = self.speed_embed(speed[:, :, None] * self.variance_scaling_factor['speed'])
             condition += speed_embed
+
+        if self.use_shift_mouth_opening_embed:
+            if shift_mouth_opening is None:
+                shift_mouth_opening = condition.new_zeros(condition.shape[:2])
+            smo_embed = self.shift_mouth_opening_embed(
+                shift_mouth_opening[:, :, None] * self.variance_scaling_factor['shift_mouth_opening']
+            )
+            condition += smo_embed
 
         return condition
 

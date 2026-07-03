@@ -83,10 +83,12 @@ class DiffSingerAcoustic(CategorizedModule, ParameterAdaptorModule):
 
     def forward(
             self, txt_tokens, mel2ph, f0, key_shift=None, speed=None,
+            shift_mouth_opening=None,
             spk_embed_id=None, languages=None, gt_mel=None, infer=True, **kwargs
     ) -> ShallowDiffusionOutput:
         condition = self.fs2(
             txt_tokens, mel2ph, f0, key_shift=key_shift, speed=speed,
+            shift_mouth_opening=shift_mouth_opening,
             spk_embed_id=spk_embed_id, languages=languages,
             **kwargs
         )
@@ -213,6 +215,7 @@ class DiffSingerVariance(CategorizedModule, ParameterAdaptorModule):
             'breathiness': 1. / 96,
             'voicing': 1. / 96,
             'tension': 0.1,
+            'mouth_opening': 1.,
             'key_shift': 1. / 12,
             'speed': 1.
         }
@@ -221,6 +224,7 @@ class DiffSingerVariance(CategorizedModule, ParameterAdaptorModule):
             'breathiness': 1.,
             'voicing': 1.,
             'tension': 1.,
+            'mouth_opening': 1.,
             'key_shift': 1.,
             'speed': 1.
         }
@@ -248,12 +252,14 @@ class DiffSingerVariance(CategorizedModule, ParameterAdaptorModule):
         else:
             ph_spk_embed = spk_embed = None
 
-        encoder_out, dur_pred_out = self.fs2(
+        encoder_out, dur_pred_out, sdp_loss, sdp_pred = self.fs2(
             txt_tokens, midi=midi, ph2word=ph2word,
             ph_dur=ph_dur, word_dur=word_dur,
             spk_embed=ph_spk_embed, languages=languages,
             infer=infer
         )
+        self._sdp_loss = sdp_loss
+        self._sdp_pred = sdp_pred
 
         if not self.predict_pitch and not self.predict_variances:
             return dur_pred_out, None, ({} if infer else None)

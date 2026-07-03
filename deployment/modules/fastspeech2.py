@@ -81,6 +81,7 @@ class FastSpeech2AcousticONNX(FastSpeech2Acoustic):
             self, tokens, durations,
             f0, variances: dict,
             gender=None, velocity=None,
+            shift_mouth_opening=None,
             spk_embed=None,
             languages=None
     ):
@@ -155,6 +156,19 @@ class FastSpeech2AcousticONNX(FastSpeech2Acoustic):
                 speed_embed = self.speed_embed(torch.FloatTensor([1.]).to(condition.device)[:, None, None] * self.variance_scaling_factor['speed'])
             condition += speed_embed
 
+        if self.use_shift_mouth_opening_embed:
+            if hasattr(self, 'frozen_shift_mouth_opening'):
+                smo_value = torch.clip(self.frozen_shift_mouth_opening, min=-1.0, max=1.0)
+                smo_embed = self.shift_mouth_opening_embed(
+                    smo_value[:, None, None] * self.variance_scaling_factor['shift_mouth_opening']
+                )
+            else:
+                smo_value = torch.clip(shift_mouth_opening, min=-1.0, max=1.0)
+                smo_embed = self.shift_mouth_opening_embed(
+                    smo_value[:, :, None] * self.variance_scaling_factor['shift_mouth_opening']
+                )
+            condition += smo_embed
+
         if hparams['use_spk_id']:
             if hasattr(self, 'frozen_spk_embed'):
                 condition += self.frozen_spk_embed
@@ -215,7 +229,7 @@ class FastSpeech2VarianceONNX(FastSpeech2Variance):
         midi_embed = self.midi_embed(ph_midi)
         dur_cond = encoder_out + midi_embed
         if hparams['use_spk_id'] and spk_embed is not None:
-            dur_cond += spk_embed
+            dur_cond = dur_cond + spk_embed
         ph_dur = self.dur_predictor(dur_cond, x_masks=x_masks)
         return ph_dur
 

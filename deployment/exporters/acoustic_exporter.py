@@ -23,6 +23,7 @@ class DiffSingerAcousticExporter(BaseExporter):
             ckpt_steps: int = None,
             freeze_gender: float = None,
             freeze_velocity: bool = False,
+            freeze_shift_mouth_opening: float = None,
             export_spk: List[Tuple[str, Dict[str, float]]] = None,
             freeze_spk: Tuple[str, Dict[str, float]] = None
     ):
@@ -57,6 +58,10 @@ class DiffSingerAcousticExporter(BaseExporter):
         # Attributes for exporting
         self.expose_gender = freeze_gender is None
         self.expose_velocity = not freeze_velocity
+        self.expose_shift_mouth_opening = (
+            hparams.get('use_shift_mouth_opening_embed', False)
+            and freeze_shift_mouth_opening is None
+        )
         self.freeze_spk: Tuple[str, Dict[str, float]] = freeze_spk \
             if hparams['use_spk_id'] else None
         self.export_spk: List[Tuple[str, Dict[str, float]]] = export_spk \
@@ -66,6 +71,12 @@ class DiffSingerAcousticExporter(BaseExporter):
             key_shift = freeze_gender * shift_max if freeze_gender >= 0. else freeze_gender * abs(shift_min)
             key_shift = max(min(key_shift, shift_max), shift_min)  # clip key shift
             self.model.fs2.register_buffer('frozen_key_shift', torch.FloatTensor([key_shift]).to(self.device))
+        if hparams.get('use_shift_mouth_opening_embed', False) and not self.expose_shift_mouth_opening:
+            smo = max(min(float(freeze_shift_mouth_opening), 1.0), -1.0)
+            self.model.fs2.register_buffer(
+                'frozen_shift_mouth_opening',
+                torch.FloatTensor([smo]).to(self.device)
+            )
         if hparams['use_spk_id']:
             if not self.export_spk and self.freeze_spk is None:
                 # In case the user did not specify any speaker settings:
@@ -143,6 +154,7 @@ class DiffSingerAcousticExporter(BaseExporter):
             }
         dsconfig['use_key_shift_embed'] = self.expose_gender
         dsconfig['use_speed_embed'] = self.expose_velocity
+        dsconfig['use_shift_mouth_opening_embed'] = self.expose_shift_mouth_opening
         for variance in VARIANCE_CHECKLIST:
             dsconfig[f'use_{variance}_embed'] = (variance in self.model.fs2.variance_embed_list)
         # sampling acceleration and shallow diffusion
@@ -207,6 +219,15 @@ class DiffSingerAcousticExporter(BaseExporter):
                 kwargs['velocity'] = torch.rand((1, n_frames), dtype=torch.float32, device=self.device)
                 input_names.append('velocity')
                 dynamic_axes['velocity'] = {
+                    1: 'n_frames'
+                }
+        if hparams.get('use_shift_mouth_opening_embed', False):
+            if self.expose_shift_mouth_opening:
+                kwargs['shift_mouth_opening'] = torch.zeros(
+                    (1, n_frames), dtype=torch.float32, device=self.device
+                )
+                input_names.append('shift_mouth_opening')
+                dynamic_axes['shift_mouth_opening'] = {
                     1: 'n_frames'
                 }
         if hparams['use_spk_id'] and not self.freeze_spk:

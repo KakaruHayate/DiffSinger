@@ -33,6 +33,7 @@ predict_energy: false
 predict_breathiness: false
 predict_voicing: false
 predict_tension: false
+predict_mouth_opening: false
 
 enc_ffn_kernel_size: 3
 use_rope: true
@@ -53,6 +54,13 @@ dur_prediction_args:
   lambda_pdur_loss: 0.3
   lambda_wdur_loss: 1.0
   lambda_sdur_loss: 3.0
+
+use_sdp: true
+sdp_ratio: 0.2
+sdp_n_chans: 192
+lambda_sdp_loss: 0.005
+lambda_sdp_reg_loss: 0.1
+sdp_reg_warmup_steps: 16000
 
 use_melody_encoder: true
 melody_encoder_args:
@@ -91,6 +99,11 @@ voicing_domain: 'mulaw'
 tension_logit_min: -10.0
 tension_logit_max: 10.0
 tension_smooth_width: 0.06
+
+mouth_opening_min: 0.0
+mouth_opening_max: 1.0
+mouth_opening_smooth_width: 0.06
+mouth_opening_estimator_ckpt: 'checkpoints/mouth_opening/model.ckpt'
 
 variances_prediction_args:
   total_repeat_bins: 72

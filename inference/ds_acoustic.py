@@ -34,6 +34,13 @@ class DiffSingerAcousticInfer(BaseSVSInfer):
                 self.variances_to_embed.add('voicing')
             if hparams.get('use_tension_embed', False):
                 self.variances_to_embed.add('tension')
+            if hparams.get('use_mouth_opening_embed', False):
+                self.variances_to_embed.add('mouth_opening')
+
+            self.use_shift_mouth_opening = hparams.get('use_shift_mouth_opening_embed', False)
+            if self.use_shift_mouth_opening:
+                assert not hparams.get('use_mouth_opening_embed', False), \
+                    'use_shift_mouth_opening_embed 与 use_mouth_opening_embed 互斥'
 
             self.phoneme_dictionary = load_phoneme_dictionary()
             if hparams['use_spk_id']:
@@ -176,6 +183,26 @@ class DiffSingerAcousticInfer(BaseSVSInfer):
                     min=speed_min, max=speed_max
                 )
 
+        if self.use_shift_mouth_opening:
+            smo_raw = param.get('shift_mouth_opening')
+            if smo_raw is None:
+                summary['shift_mouth_opening'] = 'default'
+                batch['shift_mouth_opening'] = torch.zeros(
+                    (1, length), dtype=torch.float32, device=self.device
+                )
+            else:
+                summary['shift_mouth_opening'] = 'manual'
+                smo_seq = resample_align_curve(
+                    np.array(smo_raw.split(), np.float32),
+                    original_timestep=float(param['shift_mouth_opening_timestep']),
+                    target_timestep=self.timestep,
+                    align_length=length
+                )
+                batch['shift_mouth_opening'] = torch.clip(
+                    torch.from_numpy(smo_seq.astype(np.float32)).to(self.device)[None],
+                    min=-1.0, max=1.0
+                )
+
         print(f'[{idx}]\t' + ', '.join(f'{k}: {v}' for k, v in summary.items()))
 
         return batch
@@ -201,6 +228,7 @@ class DiffSingerAcousticInfer(BaseSVSInfer):
             txt_tokens,  languages=sample.get('languages'),
             mel2ph=sample['mel2ph'], f0=sample['f0'], **variances,
             key_shift=sample.get('key_shift'), speed=sample.get('speed'),
+            shift_mouth_opening=sample.get('shift_mouth_opening'),
             spk_mix_embed=spk_mix_embed,
             infer=True
         )

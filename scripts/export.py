@@ -96,6 +96,10 @@ def main():
     help='(for random time stretching) Freeze default velocity value into the model.'
 )
 @click.option(
+    '--freeze_shift_mouth_opening', type=click.FloatRange(min=-1, max=1),
+    help='(for shift_mouth_opening_embed) Freeze a constant shift_mouth_opening alpha into the model.'
+)
+@click.option(
     '--export_spk', type=click.STRING,
     required=False, multiple=True,
     help='(for multi-speaker models) Export one or more speaker or speaker mixture keys.'
@@ -111,6 +115,7 @@ def acoustic(
         out: pathlib.Path = None,
         freeze_gender: float = 0.,
         freeze_velocity: bool = False,
+        freeze_shift_mouth_opening: float = None,
         export_spk: List[str] = None,
         freeze_spk: str = None
 ):
@@ -140,6 +145,7 @@ def acoustic(
         ckpt_steps=ckpt,
         freeze_gender=freeze_gender,
         freeze_velocity=freeze_velocity,
+        freeze_shift_mouth_opening=freeze_shift_mouth_opening,
         export_spk=export_spk_mix,
         freeze_spk=freeze_spk_mix
     )

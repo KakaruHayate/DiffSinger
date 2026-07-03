@@ -6,6 +6,7 @@ from torch.nn import functional as F
 from modules.commons.rotary_embedding_torch import RotaryEmbedding
 from modules.commons.common_layers import SinusoidalPositionalEmbedding, EncSALayer, AdamWLinear
 from modules.commons.espnet_positional_embedding import RelPositionalEncoding
+from modules.sdp.sdp import StochasticDurationPredictor
 
 DEFAULT_MAX_SOURCE_POSITIONS = 2000
 DEFAULT_MAX_TARGET_POSITIONS = 2000
@@ -56,6 +57,9 @@ class DurationPredictor(torch.nn.Module):
     """Duration predictor module.
     This is a module of duration predictor described in `FastSpeech: Fast, Robust and Controllable Text to Speech`_.
     The duration predictor predicts a duration of each frame in log domain from the hidden embeddings of encoder.
+    It combines a deterministic Duration Predictor (based on FastSpeech/ResNet) and
+    an optional Stochastic Duration Predictor (SDP, based on Normalizing Flows like VITS/Bert-VITS2)
+    to improve generation variance.
     .. _`FastSpeech: Fast, Robust and Controllable Text to Speech`:
         https://arxiv.org/pdf/1905.09263.pdf
     Note:
@@ -64,7 +68,8 @@ class DurationPredictor(torch.nn.Module):
     """
 
     def __init__(self, in_dims, n_layers=2, n_chans=384, kernel_size=3,
-                 dropout_rate=0.1, offset=1.0, dur_loss_type='mse', arch='resnet'):
+                 dropout_rate=0.1, offset=1.0, dur_loss_type='mse', arch='resnet',
+                 use_sdp=False, sdp_ratio=0.2, sdp_n_chans=192, gin_channels=0):
         """Initialize duration predictor module.
         Args:
             in_dims (int): Input dimension.
@@ -73,6 +78,12 @@ class DurationPredictor(torch.nn.Module):
             kernel_size (int, optional): Kernel size of convolutional layers.
             dropout_rate (float, optional): Dropout rate.
             offset (float, optional): Offset value to avoid nan in log domain.
+            dur_loss_type (str, optional): Loss type ('mse', 'huber', etc.).
+            arch (str, optional): Architecture type ('resnet' or standard CNN).
+            use_sdp (bool, optional): Whether to use Stochastic Duration Predictor.
+            sdp_ratio (float, optional): Interpolation ratio between SDP and DP outputs during inference.
+            sdp_n_chans (int, optional): Hidden channels for SDP.
+            gin_channels (int, optional): Speaker embedding channels for SDP conditioning.
         """
         super(DurationPredictor, self).__init__()
         self.offset = offset
@@ -114,6 +125,20 @@ class DurationPredictor(torch.nn.Module):
             raise NotImplementedError()
         self.linear = AdamWLinear(n_chans, self.out_dims)
 
+        self.use_sdp = use_sdp
+        self.sdp_ratio = sdp_ratio
+        if self.use_sdp:
+            self.sdp = StochasticDurationPredictor(
+                in_channels=in_dims,
+                filter_channels=sdp_n_chans,
+                kernel_size=3,
+                p_dropout=0.5,
+                n_flows=4,
+                gin_channels=gin_channels
+            )
+        else:
+            self.sdp = None
+
     def out2dur(self, xs):
         if self.loss_type in ['mse', 'huber']:
             # NOTE: calculate loss in log domain
@@ -126,16 +151,21 @@ class DurationPredictor(torch.nn.Module):
 
     def forward(self, xs, x_masks=None, infer=True):
         """Calculate forward propagation.
+
+        Returns only the deterministic duration predictor output.
+        SDP training/inference is handled via separate methods.
+
         Args:
             xs (Tensor): Batch of input sequences (B, Tmax, idim).
             x_masks (BoolTensor, optional): Batch of masks indicating padded part (B, Tmax).
-            infer (bool): Whether inference
+            infer (bool): Whether inference.
+
         Returns:
-            (train) FloatTensor, (infer) LongTensor: Batch of predicted durations in linear domain (B, Tmax).
+            Tensor: Predicted linear durations (B, Tmax).
         """
-        xs = xs.transpose(1, -1)  # (B, idim, Tmax)
         masks = 1 - x_masks.float()
         masks_ = masks[:, None, :]
+        xs = xs.transpose(1, -1)  # (B, idim, Tmax)
         for idx, f in enumerate(self.conv):
             if self.use_resnet:
                 residual = self.res_conv(xs) if idx == 0 and self.res_conv is not None else xs
@@ -149,8 +179,47 @@ class DurationPredictor(torch.nn.Module):
 
         dur_pred = self.out2dur(xs)
         if infer:
-            dur_pred = dur_pred.clamp(min=0.)  # avoid negative value
+            dur_pred = dur_pred.clamp(min=0.)
         return dur_pred
+
+    # ── SDP helpers (no-op when use_sdp=False) ──────────────────────
+
+    def sdp_loss(self, sdp_cond, x_mask, ph_dur, g=None):
+        """Compute SDP negative log-likelihood flow loss.
+
+        Args:
+            sdp_cond: Conditioning [B, C, T] (channels-first).
+            x_mask: Mask [B, 1, T].
+            ph_dur: Ground-truth durations [B, T].
+            g: Optional speaker embedding [B, H, T].
+
+        Returns:
+            Tensor: mean NLL loss (scalar).
+        """
+        if not self.use_sdp:
+            return ph_dur.new_zeros(1).sum()  # zero scalar
+
+        nll = self.sdp(x=sdp_cond, x_mask=x_mask, w=ph_dur, g=g, reverse=False, noise_scale=1.0)
+        return nll.sum() / x_mask.sum()
+
+    def sdp_sample(self, sdp_cond, x_mask, g=None, noise_scale=0.8):
+        """Sample from SDP (reverse flow).
+
+        Args:
+            sdp_cond: Conditioning [B, C, T] (channels-first).
+            x_mask: Mask [B, 1, T].
+            g: Optional speaker embedding [B, H, T].
+            noise_scale: Sampling noise scale.
+
+        Returns:
+            Tensor: Sampled linear durations [B, T].
+        """
+        if not self.use_sdp:
+            return None
+
+        logw = self.sdp(x=sdp_cond, x_mask=x_mask, g=g, reverse=True, noise_scale=noise_scale)
+        # logw: [B, 1, T] → transpose → [B, T, 1] → out2dur → [B, T]
+        return torch.ceil(self.out2dur(logw.transpose(1, -1) * x_mask.transpose(1, -1)))
 
 
 class VariancePredictor(torch.nn.Module):

@@ -31,7 +31,11 @@ class VarianceDataset(BaseDataset):
         need_breathiness = hparams['predict_breathiness']
         need_voicing = hparams['predict_voicing']
         need_tension = hparams['predict_tension']
-        self.predict_variances = need_energy or need_breathiness or need_voicing or need_tension
+        need_mouth_opening = hparams['predict_mouth_opening']
+        self.predict_variances = (
+            need_energy or need_breathiness or need_voicing
+            or need_tension or need_mouth_opening
+        )
 
     def collater(self, samples):
         batch = super().collater(samples)
@@ -72,6 +76,8 @@ class VarianceDataset(BaseDataset):
             batch['voicing'] = utils.collate_nd([s['voicing'] for s in samples], 0)
         if hparams['predict_tension']:
             batch['tension'] = utils.collate_nd([s['tension'] for s in samples], 0)
+        if hparams['predict_mouth_opening']:
+            batch['mouth_opening'] = utils.collate_nd([s['mouth_opening'] for s in samples], 0)
 
         return batch
 
@@ -98,6 +104,7 @@ class VarianceTask(BaseTask):
         self.predict_dur = hparams['predict_dur']
         if self.predict_dur:
             self.lambda_dur_loss = hparams['lambda_dur_loss']
+            self.use_sdp = hparams.get('use_sdp', False)
 
         self.predict_pitch = hparams['predict_pitch']
         if self.predict_pitch:
@@ -107,6 +114,7 @@ class VarianceTask(BaseTask):
         predict_breathiness = hparams['predict_breathiness']
         predict_voicing = hparams['predict_voicing']
         predict_tension = hparams['predict_tension']
+        predict_mouth_opening = hparams['predict_mouth_opening']
         self.variance_prediction_list = []
         if predict_energy:
             self.variance_prediction_list.append('energy')
@@ -116,6 +124,8 @@ class VarianceTask(BaseTask):
             self.variance_prediction_list.append('voicing')
         if predict_tension:
             self.variance_prediction_list.append('tension')
+        if predict_mouth_opening:
+            self.variance_prediction_list.append('mouth_opening')
         self.predict_variances = len(self.variance_prediction_list) > 0
         self.lambda_var_loss = hparams['lambda_var_loss']
         super()._finish_init()
@@ -159,6 +169,18 @@ class VarianceTask(BaseTask):
             self.register_validation_loss('dur_loss')
             self.register_validation_metric('rhythm_corr', RhythmCorrectness(tolerance=0.05))
             self.register_validation_metric('ph_dur_acc', PhonemeDurationAccuracy(tolerance=0.2))
+            if self.use_sdp:
+                self.dur_sdp_loss = DurationLoss(
+                    offset=dur_hparams['log_offset'],
+                    loss_type=dur_hparams['loss_type'],
+                    lambda_pdur=dur_hparams['lambda_pdur_loss'],
+                    lambda_wdur=dur_hparams['lambda_wdur_loss'],
+                    lambda_sdur=dur_hparams['lambda_sdur_loss']
+                )
+                self.register_validation_loss('dur_sdp_loss')
+                self.lambda_sdp_loss = hparams.get('lambda_sdp_loss', 0.005)
+                self.sdp_flow_loss = torch.nn.Identity()
+                self.register_validation_loss('sdp_flow_loss')
         if self.predict_pitch:
             if self.diffusion_type == 'ddpm':
                 self.pitch_loss = DiffusionLoss(loss_type=hparams['main_loss_type'])
@@ -205,6 +227,7 @@ class VarianceTask(BaseTask):
         breathiness = sample.get('breathiness')  # [B, T_s]
         voicing = sample.get('voicing')  # [B, T_s]
         tension = sample.get('tension')  # [B, T_s]
+        mouth_opening = sample.get('mouth_opening')  # [B, T_s]
 
         pitch_retake = variance_retake = None
         if (self.predict_pitch or self.predict_variances) and not infer:
@@ -228,6 +251,7 @@ class VarianceTask(BaseTask):
             note_dur=note_dur, note_glide=note_glide, mel2note=mel2note,
             base_pitch=base_pitch, pitch=pitch,
             energy=energy, breathiness=breathiness, voicing=voicing, tension=tension,
+            mouth_opening=mouth_opening,
             pitch_retake=pitch_retake, variance_retake=variance_retake,
             spk_id=spk_ids, infer=infer
         )
@@ -241,6 +265,18 @@ class VarianceTask(BaseTask):
             losses = {}
             if dur_pred is not None:
                 losses['dur_loss'] = self.lambda_dur_loss * self.dur_loss(dur_pred, ph_dur, ph2word=ph2word)
+                if self.use_sdp:
+                    sdp_loss = getattr(self.model, '_sdp_loss', None)
+                    sdp_pred = getattr(self.model, '_sdp_pred', None)
+                    if sdp_loss is not None:
+                        losses['sdp_flow_loss'] = self.sdp_flow_loss(sdp_loss) * self.lambda_sdp_loss
+                    if sdp_pred is not None:
+                        lambda_sdp_reg_base = hparams.get('lambda_sdp_reg_loss', 0.1)
+                        warmup_steps = hparams.get('sdp_reg_warmup_steps', 16000)
+                        step = getattr(self, 'global_step', 1)
+                        anneal_weight = min(1.0, step / warmup_steps) if warmup_steps > 0 else 1.0
+                        current_sdp_reg_weight = lambda_sdp_reg_base * anneal_weight
+                        losses['dur_sdp_loss'] = current_sdp_reg_weight * self.dur_sdp_loss(sdp_pred, ph_dur, ph2word=ph2word)
             non_padding = (mel2ph > 0).unsqueeze(-1) if mel2ph is not None else None
             if pitch_pred is not None:
                 if self.diffusion_type == 'ddpm':

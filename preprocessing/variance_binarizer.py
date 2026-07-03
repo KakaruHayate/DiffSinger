@@ -7,6 +7,8 @@ import librosa
 import numpy as np
 import torch
 import torch.nn.functional as F
+
+import modules.estimators
 from scipy import interpolate
 
 from basics.base_binarizer import BaseBinarizer, BinarizationError
@@ -48,6 +50,7 @@ VARIANCE_ITEM_ATTRIBUTES = [
     'breathiness',  # frame-level RMS of aperiodic parts (dB), float32[T_s,]
     'voicing',  # frame-level RMS of harmonic parts (dB), float32[T_s,]
     'tension',  # frame-level tension (logit), float32[T_s,]
+    'mouth_opening',  # frame-level mouth opening, float32[T_s,]
 ]
 WAV_CANDIDATE_EXTENSIONS = ['.wav', '.flac']
 DS_INDEX_SEP = '#'
@@ -60,6 +63,8 @@ energy_smooth: SinusoidalSmoothingConv1d = None
 breathiness_smooth: SinusoidalSmoothingConv1d = None
 voicing_smooth: SinusoidalSmoothingConv1d = None
 tension_smooth: SinusoidalSmoothingConv1d = None
+mouth_opening_estimator = None
+mouth_opening_smooth: SinusoidalSmoothingConv1d = None
 
 
 class VarianceBinarizer(BaseBinarizer):
@@ -81,7 +86,7 @@ class VarianceBinarizer(BaseBinarizer):
         predict_breathiness = hparams['predict_breathiness']
         predict_voicing = hparams['predict_voicing']
         predict_tension = hparams['predict_tension']
-        self.predict_variances = predict_energy or predict_breathiness or predict_voicing or predict_tension
+        self.predict_variances = predict_energy or predict_breathiness or predict_voicing or predict_tension or hparams['predict_mouth_opening']
         self.lr = LengthRegulator().to(self.device)
         self.prefer_ds = self.binarization_args['prefer_ds']
         self.cached_ds = {}
@@ -522,6 +527,39 @@ class VarianceBinarizer(BaseBinarizer):
                 tension = tension_smooth(torch.from_numpy(tension).to(self.device)[None])[0].cpu().numpy()
 
             processed_input['tension'] = tension
+
+        # Below: extract mouth_opening
+        if hparams['predict_mouth_opening']:
+            mouth_opening = None
+            if self.prefer_ds:
+                mouth_opening_seq = self.load_attr_from_ds(ds_id, name, 'mouth_opening', idx=ds_seg_idx)
+                if mouth_opening_seq is not None:
+                    mouth_opening = resample_align_curve(
+                        np.array(mouth_opening_seq.split(), np.float32),
+                        original_timestep=float(self.load_attr_from_ds(
+                            ds_id, name, 'mouth_opening_timestep', idx=ds_seg_idx
+                        )),
+                        target_timestep=self.timestep,
+                        align_length=length
+                    )
+            if mouth_opening is None:
+                global mouth_opening_estimator
+                if mouth_opening_estimator is None:
+                    mouth_opening_estimator = modules.estimators.CurveEstimator(
+                        hparams['mouth_opening_estimator_ckpt'], self.device
+                    )
+                mouth_opening = mouth_opening_estimator.estimate(
+                    waveform, hparams['audio_sample_rate'], length
+                )
+                global mouth_opening_smooth
+                if mouth_opening_smooth is None:
+                    mouth_opening_smooth = SinusoidalSmoothingConv1d(
+                        round(hparams['mouth_opening_smooth_width'] / self.timestep)
+                    ).eval().to(self.device)
+                mouth_opening = mouth_opening_smooth(
+                    torch.from_numpy(mouth_opening).to(self.device)[None]
+                )[0].cpu().numpy()
+            processed_input['mouth_opening'] = mouth_opening
 
         return processed_input
 
