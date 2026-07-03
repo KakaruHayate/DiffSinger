@@ -217,7 +217,10 @@ class AcousticTask(BaseTask):
 
     @contextlib.contextmanager
     def _patched_hparams(self, new_hparams: dict):
-        saved = dict(hparams)
+        # Deep-copy via deepcopy to avoid leaking in-place mutations of
+        # nested values (e.g. nested dicts/lists) back into saved hparams.
+        import copy
+        saved = copy.deepcopy(dict(hparams))
         try:
             hparams.clear()
             hparams.update(new_hparams)

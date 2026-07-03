@@ -194,13 +194,23 @@ class DurationPredictor(torch.nn.Module):
             g: Optional speaker embedding [B, H, T].
 
         Returns:
-            Tensor: mean NLL loss (scalar).
+            Tensor: mean NLL loss (scalar, float32).
         """
-        if not self.use_sdp:
-            return ph_dur.new_zeros(1).sum()  # zero scalar
+        if not self.use_sdp or ph_dur is None:
+            # Always return a float32 zero scalar — callers multiply by
+            # lambda_sdp_loss (float), so dtype must be consistent.
+            device = sdp_cond.device if sdp_cond is not None else (
+                ph_dur.device if ph_dur is not None else 'cpu'
+            )
+            return torch.zeros(1, device=device, dtype=torch.float32)
+
+        n_tokens = x_mask.sum()
+        if n_tokens == 0:
+            # All positions masked out — no valid supervision. Avoid 0/0 = NaN.
+            return torch.zeros(1, device=sdp_cond.device, dtype=torch.float32)
 
         nll = self.sdp(x=sdp_cond, x_mask=x_mask, w=ph_dur, g=g, reverse=False, noise_scale=1.0)
-        return nll.sum() / x_mask.sum()
+        return nll.sum() / n_tokens
 
     def sdp_sample(self, sdp_cond, x_mask, g=None, noise_scale=0.8):
         """Sample from SDP (reverse flow).
@@ -212,14 +222,16 @@ class DurationPredictor(torch.nn.Module):
             noise_scale: Sampling noise scale.
 
         Returns:
-            Tensor: Sampled linear durations [B, T].
+            Tensor or None: Sampled linear durations [B, T], or None if SDP disabled.
         """
         if not self.use_sdp:
             return None
 
         logw = self.sdp(x=sdp_cond, x_mask=x_mask, g=g, reverse=True, noise_scale=noise_scale)
         # logw: [B, 1, T] → transpose → [B, T, 1] → out2dur → [B, T]
-        return torch.ceil(self.out2dur(logw.transpose(1, -1) * x_mask.transpose(1, -1)))
+        # Mask ahead of out2dur so padding positions don't bleed into exp() and NaN.
+        mask_2d = x_mask.transpose(1, -1)  # [B, T, 1]
+        return torch.ceil(self.out2dur(logw.transpose(1, -1) * mask_2d))
 
 
 class VariancePredictor(torch.nn.Module):
