@@ -199,6 +199,18 @@ class VarianceTask(BaseTask):
             self.register_validation_loss('dur_loss')
             self.register_validation_metric('rhythm_corr', RhythmCorrectness(tolerance=0.05))
             self.register_validation_metric('ph_dur_acc', PhonemeDurationAccuracy(tolerance=0.2))
+            if hparams.get('use_sdp', False):
+                self.dur_sdp_loss = DurationLoss(
+                    offset=dur_hparams['log_offset'],
+                    loss_type=dur_hparams['loss_type'],
+                    lambda_pdur=dur_hparams['lambda_pdur_loss'],
+                    lambda_wdur=dur_hparams['lambda_wdur_loss'],
+                    lambda_sdur=dur_hparams['lambda_sdur_loss']
+                )
+                self.register_validation_loss('dur_sdp_loss')
+                self.lambda_sdp_loss = hparams.get('lambda_sdp_loss', 0.005)
+                self.sdp_flow_loss = torch.nn.Identity()
+                self.register_validation_loss('sdp_flow_loss')
         if self.predict_pitch:
             if self.diffusion_type == 'ddpm':
                 self.pitch_loss = DiffusionLoss(loss_type=hparams['main_loss_type'])
@@ -274,15 +286,23 @@ class VarianceTask(BaseTask):
             spk_id=spk_ids, infer=infer
         )
 
-        dur_pred, pitch_pred, variances_pred = output
+        dur_pred, pitch_pred, variances_pred, sdp_loss, sdp_pred = output
         if infer:
             if dur_pred is not None:
                 dur_pred = dur_pred.round().long()
-            return dur_pred, pitch_pred, variances_pred  # Tensor, Tensor, Dict[str, Tensor]
+            return dur_pred, pitch_pred, variances_pred, sdp_pred  # Tensor, Tensor, Dict[str, Tensor], Tensor
         else:
             losses = {}
             if dur_pred is not None:
                 losses['dur_loss'] = self.lambda_dur_loss * self.dur_loss(dur_pred, ph_dur, ph2word=ph2word)
+                if hparams.get('use_sdp', False):
+                    losses['sdp_flow_loss'] = self.sdp_flow_loss(sdp_loss) * self.lambda_sdp_loss
+                    lambda_sdp_reg_base = hparams.get('lambda_sdp_reg_loss', 0.1)
+                    warmup_steps = hparams.get('sdp_reg_warmup_steps', 16000)
+                    step = getattr(self, 'global_step', 1)
+                    anneal_weight = min(1.0, step / warmup_steps) if warmup_steps > 0 else 1.0
+                    current_sdp_reg_weight = lambda_sdp_reg_base * anneal_weight
+                    losses['dur_sdp_loss'] = current_sdp_reg_weight * self.dur_sdp_loss(sdp_pred, ph_dur, ph2word=ph2word)
             non_padding = (mel2ph > 0).unsqueeze(-1) if mel2ph is not None else None
             if pitch_pred is not None:
                 if self.diffusion_type == 'ddpm':
@@ -321,7 +341,7 @@ class VarianceTask(BaseTask):
             def sample_get(key, idx, abs_idx):
                 return sample[key][idx][:self.valid_dataset.metadata[key][abs_idx]].unsqueeze(0)
 
-            dur_preds, pitch_preds, variances_preds = self.run_model(sample, infer=True)
+            dur_preds, pitch_preds, variances_preds, sdp_preds = self.run_model(sample, infer=True)
             for i in range(len(sample['indices'])):
                 data_idx = sample['indices'][i]
                 if data_idx < hparams['num_valid_plots']:
@@ -330,6 +350,9 @@ class VarianceTask(BaseTask):
                         tokens = sample_get('tokens', i, data_idx)
                         gt_dur = sample_get('ph_dur', i, data_idx)
                         pred_dur = dur_preds[i][:dur_len].unsqueeze(0)
+
+                        pred_sdp = sdp_preds[i][:dur_len].unsqueeze(0) if sdp_preds is not None else None
+
                         ph2word = sample_get('ph2word', i, data_idx)
                         mask = tokens != 0
                         self.valid_metrics['rhythm_corr'].update(
@@ -340,7 +363,8 @@ class VarianceTask(BaseTask):
                         )
                         self.plot_dur(
                             data_idx, gt_dur, pred_dur,
-                            txt=self.valid_dataset.metadata['ph_texts'][data_idx].split()
+                            txt=self.valid_dataset.metadata['ph_texts'][data_idx].split(),
+                            sdp_pred=pred_sdp
                         )
                     if pitch_preds is not None:
                         pitch_len = self.valid_dataset.metadata['pitch'][data_idx]
@@ -374,12 +398,16 @@ class VarianceTask(BaseTask):
     ############
     # validation plots
     ############
-    def plot_dur(self, data_idx, gt_dur, pred_dur, txt=None):
+    def plot_dur(self, data_idx, gt_dur, pred_dur, txt=None, sdp_pred=None):
         gt_dur = gt_dur[0].cpu().numpy()
         pred_dur = pred_dur[0].cpu().numpy()
+        if sdp_pred is not None:
+            sdp_pred = sdp_pred[0].cpu().numpy()
+
         title_text = f"{self.valid_dataset.metadata['spk_names'][data_idx]} - {self.valid_dataset.metadata['names'][data_idx]}"
+        sdp_ratio = hparams.get('sdp_ratio', 0.2)
         self.logger.all_rank_experiment.add_figure(f'dur_{data_idx}', dur_to_figure(
-            gt_dur, pred_dur, txt, title_text
+            gt_dur, pred_dur, txt, title=title_text, sdp_pred=sdp_pred, sdp_ratio=sdp_ratio
         ), self.global_step)
 
     def plot_pitch(self, data_idx, gt_pitch, pred_pitch, note_midi, note_dur, note_rest):
