@@ -443,6 +443,20 @@ class MultiheadSelfAttentionWithRoPE(nn.Module):
 
         return output
 
+class LaurelBlock(nn.Module):
+    """Laurel residual connection block"""
+    def __init__(self, dim, bottleneck_dim=64):
+        super().__init__()
+        self.down_proj = nn.Linear(dim, bottleneck_dim, bias=False)
+        self.up_proj = nn.Linear(bottleneck_dim, dim, bias=False)
+        self.norm = LayerNorm(dim)
+
+    def forward(self, x):
+        residual = x
+        x = self.down_proj(x)
+        x = self.up_proj(x)
+        x = self.norm(x)
+        return residual + x
 
 class EncSALayer(nn.Module):
     def __init__(self, c, num_heads, dropout, attention_dropout=0.1,
@@ -476,6 +490,10 @@ class EncSALayer(nn.Module):
         self.ffn = TransformerFFNLayer(
             c, 4 * c, kernel_size=kernel_size, dropout=relu_dropout, act=act
         )
+        
+        self.use_laurel_block = use_laurel_block
+        if self.use_laurel_block:
+            self.laurel = LaurelBlock(c)
 
     def forward(self, x, encoder_padding_mask=None, cond=None, **kwargs):
         layer_norm_training = kwargs.get('layer_norm_training', None)
@@ -491,6 +509,10 @@ class EncSALayer(nn.Module):
         x = F.dropout(x, self.dropout, training=self.training)
         x = residual + x
         x = x * (1 - encoder_padding_mask.float())[..., None]
+
+        if self.use_laurel_block:
+            x = self.laurel(x) * 0.707106781187 # sqrt(1/2)
+            x = x * (1 - encoder_padding_mask.float())[..., None]
 
         residual = x
         if self.use_mix_ln:
