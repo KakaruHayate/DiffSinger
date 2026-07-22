@@ -13,14 +13,14 @@ DEFAULT_MAX_TARGET_POSITIONS = 2000
 
 class TransformerEncoderLayer(nn.Module):
     def __init__(self, hidden_size, dropout, kernel_size=None, act='gelu', num_heads=2, rotary_embed=None,
-                 layer_idx=None, mix_ln_layer=None):
+                 layer_idx=None, mix_ln_layer=None, use_laurel_block=False):
         super().__init__()
         self.op = EncSALayer(
             hidden_size, num_heads, dropout=dropout,
             attention_dropout=0.0, relu_dropout=dropout,
             kernel_size=kernel_size,
             act=act, rotary_embed=rotary_embed,
-            layer_idx=layer_idx, mix_ln_layer=mix_ln_layer
+            layer_idx=layer_idx, mix_ln_layer=mix_ln_layer,use_laurel_block=use_laurel_block
         )
 
     def forward(self, x, **kwargs):
@@ -387,7 +387,7 @@ class FastSpeech2Encoder(nn.Module):
                     "RoPE requires the hidden size to be multiple of "
                     f"num_heads * 2 = {num_heads * 2}, but got {embed_dim}."
                 )
-            rotary_embed = RotaryEmbedding(dim=embed_dim // num_heads, interleaved=rope_interleaved)
+            rotary_embed = RotaryEmbedding(dim=embed_dim // num_heads,theta=rope_theta, interleaved=rope_interleaved)
         else:
             rotary_embed = None
         self.layers = nn.ModuleList([
