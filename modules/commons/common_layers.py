@@ -461,7 +461,7 @@ class LaurelBlock(nn.Module):
 class EncSALayer(nn.Module):
     def __init__(self, c, num_heads, dropout, attention_dropout=0.1,
                  relu_dropout=0.1, kernel_size=9, act='gelu', rotary_embed=None,
-                 layer_idx=None, mix_ln_layer=None
+                 layer_idx=None, mix_ln_layer=None,use_laurel_block=False
                  ):
         super().__init__()
         self.dropout = dropout
