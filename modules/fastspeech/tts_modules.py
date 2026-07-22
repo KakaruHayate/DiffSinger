@@ -373,7 +373,8 @@ class FastSpeech2Encoder(nn.Module):
             self, hidden_size, num_layers,
             ffn_kernel_size=9, ffn_act='gelu',
             dropout=None, num_heads=2, use_pos_embed=True, rel_pos=True,
-            use_rope=False, rope_interleaved=True, mix_ln_layer=None
+            use_rope=False, rope_interleaved=True, mix_ln_layer=None, rope_theta=10000,
+            use_laurel_block=False
     ):
         super().__init__()
         self.num_layers = num_layers
@@ -394,7 +395,7 @@ class FastSpeech2Encoder(nn.Module):
                 self.hidden_size, self.dropout,
                 kernel_size=ffn_kernel_size, act=ffn_act,
                 num_heads=num_heads, rotary_embed=rotary_embed,
-                layer_idx=i, mix_ln_layer=mix_ln_layer
+                layer_idx=i, mix_ln_layer=mix_ln_layer, use_laurel_block=use_laurel_block
             )
             for i in range(self.num_layers)
         ])
