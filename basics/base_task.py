@@ -150,8 +150,25 @@ class BaseTask(pl.LightningModule):
             if isinstance(self.model, CategorizedModule):
                 self.model.check_category(ckpt.get('category'))
 
+            weight_source = hparams.get('finetune_weight_source', 'model')
+            if weight_source == 'model':
+                source_state_dict = ckpt['state_dict']
+            elif weight_source == 'ema':
+                ema_state_dict = ckpt.get('ema_state_dict')
+                if ema_state_dict is None:
+                    raise RuntimeError(
+                        f"EMA weights were requested for finetuning, but '{pre_train_ckpt_path}' "
+                        "does not contain 'ema_state_dict'."
+                    )
+                source_state_dict = ckpt['state_dict'].copy()
+                source_state_dict.update(ema_state_dict)
+            else:
+                raise ValueError(
+                    f"Invalid finetune_weight_source: '{weight_source}'. Expected 'model' or 'ema'."
+                )
+
             state_dict = {}
-            for i in ckpt['state_dict']:
+            for i in source_state_dict:
                 # if 'diffusion' in i:
                 # if i in rrrr:
                 #     continue
@@ -164,7 +181,7 @@ class BaseTask(pl.LightningModule):
                 if skip:
                     continue
 
-                state_dict[i] = ckpt['state_dict'][i]
+                state_dict[i] = source_state_dict[i]
                 print(i)
             return state_dict
         else:
@@ -203,6 +220,13 @@ class BaseTask(pl.LightningModule):
         )
         rank_zero_info(f'| EMA: {len(ema)} trainable parameter(s) registered.')
         return ema
+
+    def ema_teacher_forward(self, *args, **kwargs):
+        """Run ``self.model`` with stop-gradient EMA weights for teacher targets."""
+        if not self.use_ema:
+            raise RuntimeError("EMA teacher forward requires ema_enabled=true.")
+        self._register_ema_if_needed()
+        return self.ema.teacher_forward(self.model, *args, parameter_prefix='model.', **kwargs)
 
     def build_losses_and_metrics(self):
         raise NotImplementedError()
@@ -514,6 +538,11 @@ class BaseTask(pl.LightningModule):
         checkpoint['trainer_stage'] = self.trainer.state.stage.value
         if self.use_ema:
             checkpoint['ema_state_dict'] = self.ema.state_dict()
+            checkpoint['ema_config'] = {
+                'decay': self.ema.decay,
+                'include_params': list(hparams.get('ema_include_params', ['model.*'])),
+                'exclude_params': list(hparams.get('ema_exclude_params', [])),
+            }
 
     def on_load_checkpoint(self, checkpoint):
         from lightning.pytorch.trainer.states import RunningStage
@@ -522,9 +551,46 @@ class BaseTask(pl.LightningModule):
         if self.use_ema:
             ema_state_dict = checkpoint.get('ema_state_dict')
             if ema_state_dict is None:
-                rank_zero_info('| EMA state not found in checkpoint; initializing from restored model parameters.')
+                missing_state = hparams.get('ema_missing_state', 'error')
+                if missing_state == 'error':
+                    raise RuntimeError(
+                        "EMA is enabled, but the checkpoint does not contain 'ema_state_dict'. "
+                        "Set ema_missing_state='initialize' explicitly to initialize EMA from "
+                        "the restored model parameters."
+                    )
+                if missing_state != 'initialize':
+                    raise ValueError(
+                        f"Invalid ema_missing_state: '{missing_state}'. Expected 'error' or 'initialize'."
+                    )
+                rank_zero_info('| EMA state not found; initializing from restored model parameters by request.')
                 self._ema_needs_register = True
             else:
+                ema_config = checkpoint.get('ema_config')
+                if ema_config is None:
+                    missing_config = hparams.get('ema_missing_config', 'error')
+                    if missing_config == 'error':
+                        raise RuntimeError(
+                            "The checkpoint contains EMA weights but no 'ema_config' metadata. "
+                            "Set ema_missing_config='allow' explicitly to load this legacy EMA "
+                            "checkpoint with key and shape validation only."
+                        )
+                    if missing_config != 'allow':
+                        raise ValueError(
+                            f"Invalid ema_missing_config: '{missing_config}'. Expected 'error' or 'allow'."
+                        )
+                    rank_zero_info('| EMA config metadata not found; legacy loading allowed by request.')
+                else:
+                    current_config = {
+                        'decay': self.ema.decay,
+                        'include_params': list(hparams.get('ema_include_params', ['model.*'])),
+                        'exclude_params': list(hparams.get('ema_exclude_params', [])),
+                    }
+                    if ema_config != current_config:
+                        raise RuntimeError(
+                            "EMA configuration mismatches the checkpoint: "
+                            f"checkpoint={ema_config}, current={current_config}. "
+                            "Use the checkpoint configuration for strict resume, or start a finetune run."
+                        )
                 self.ema.load_state_dict(ema_state_dict, strict=True)
         if checkpoint.get('trainer_stage', '') == RunningStage.VALIDATING.value:
             self.skip_immediate_validation = True

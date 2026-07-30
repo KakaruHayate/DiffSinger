@@ -4,6 +4,7 @@ from collections.abc import Mapping
 
 import torch
 from torch import Tensor, nn
+from torch.func import functional_call
 
 
 class ExponentialMovingAverage:
@@ -77,6 +78,46 @@ class ExponentialMovingAverage:
         for name, parameter in self.referenced.items():
             parameter.copy_(self.backup[name].to(device=parameter.device, dtype=parameter.dtype))
         self.backup.clear()
+
+    @torch.no_grad()
+    def teacher_forward(self, module: nn.Module, *args, parameter_prefix: str = '', **kwargs):
+        """Run a stop-gradient forward with EMA parameters without mutating ``module``.
+
+        ``parameter_prefix`` maps checkpoint-style names such as ``model.*`` to
+        the namespace returned by the supplied module's ``named_parameters``.
+        Buffers and parameters not tracked by EMA retain their current values.
+        """
+        if self.applied:
+            raise RuntimeError("Cannot run an EMA teacher forward while shadow parameters are applied.")
+        module_parameters = dict(module.named_parameters())
+        teacher_parameters = {}
+        unmatched_keys = []
+        for name, tensor in self.shadow.items():
+            if parameter_prefix:
+                if not name.startswith(parameter_prefix):
+                    unmatched_keys.append(name)
+                    continue
+                module_name = name[len(parameter_prefix):]
+            else:
+                module_name = name
+            if module_name not in module_parameters:
+                unmatched_keys.append(name)
+                continue
+            teacher_parameters[module_name] = tensor.to(
+                device=module_parameters[module_name].device,
+                dtype=module_parameters[module_name].dtype
+            )
+        if unmatched_keys:
+            raise KeyError(
+                "EMA teacher parameter names do not match the supplied module:\n"
+                + "\n".join(f"  {key}" for key in sorted(unmatched_keys))
+            )
+        was_training = module.training
+        module.eval()
+        try:
+            return functional_call(module, teacher_parameters, args=args, kwargs=kwargs, strict=False)
+        finally:
+            module.train(was_training)
 
     def state_dict(self) -> dict[str, Tensor]:
         return {

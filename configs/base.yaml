@@ -87,6 +87,7 @@ nccl_p2p: true
 ###########
 finetune_enabled: false
 finetune_ckpt_path: null
+finetune_weight_source: 'model'  # 'model' or 'ema'; EMA overlays the full model state
 finetune_ignored_params: []
 finetune_strict_shapes: true
 
@@ -101,3 +102,5 @@ ema_decay: 0.999
 ema_include_params:
   - 'model.*'
 ema_exclude_params: []
+ema_missing_state: 'error'  # 'error' or 'initialize'
+ema_missing_config: 'error'  # 'error' or 'allow' for legacy EMA checkpoints
