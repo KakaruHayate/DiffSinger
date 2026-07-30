@@ -3,6 +3,7 @@ import os
 import pathlib
 import shutil
 import sys
+from fnmatch import fnmatch
 from typing import Dict
 
 import matplotlib
@@ -24,6 +25,7 @@ from utils.training_utils import (
     get_latest_checkpoint_path, get_strategy
 )
 from utils.phoneme_utils import load_phoneme_dictionary
+from training.weight_averaging import ExponentialMovingAverage
 
 torch.multiprocessing.set_sharing_strategy(os.getenv('TORCH_SHARE_STRATEGY', 'file_system'))
 
@@ -72,6 +74,10 @@ class BaseTask(pl.LightningModule):
 
         self.phoneme_dictionary = load_phoneme_dictionary()
         self.build_model()
+
+        self.use_ema = hparams.get('ema_enabled', False)
+        self.ema = self.build_ema() if self.use_ema else None
+        self._ema_needs_register = False
 
         self.valid_losses: Dict[str, Metric] = {}
         self.valid_metrics: Dict[str, Metric] = {}
@@ -181,6 +187,23 @@ class BaseTask(pl.LightningModule):
     def print_arch(self):
         utils.print_arch(self.model)
 
+    def build_ema(self) -> ExponentialMovingAverage:
+        parameters = dict(self.named_parameters())
+        includes = hparams.get('ema_include_params', ['model.*'])
+        excludes = hparams.get('ema_exclude_params', [])
+        parameters = {
+            name: parameter
+            for name, parameter in parameters.items()
+            if (not includes or any(fnmatch(name, pattern) for pattern in includes))
+            and not any(fnmatch(name, pattern) for pattern in excludes)
+        }
+        ema = ExponentialMovingAverage(
+            parameters=parameters,
+            decay=hparams.get('ema_decay', 0.999)
+        )
+        rank_zero_info(f'| EMA: {len(ema)} trainable parameter(s) registered.')
+        return ema
+
     def build_losses_and_metrics(self):
         raise NotImplementedError()
 
@@ -199,6 +222,11 @@ class BaseTask(pl.LightningModule):
             2. calculate losses if not infer
         """
         raise NotImplementedError()
+
+    def on_fit_start(self):
+        if self.use_ema and self._ema_needs_register:
+            self.ema.register()
+            self._ema_needs_register = False
 
     def on_train_epoch_start(self):
         if self.training_sampler is not None:
@@ -226,6 +254,11 @@ class BaseTask(pl.LightningModule):
 
         return total_loss
 
+    def optimizer_step(self, *args, **kwargs):
+        super().optimizer_step(*args, **kwargs)
+        if self.use_ema:
+            self.ema.step()
+
     # def on_before_optimizer_step(self, *args, **kwargs):
     #     self.log_dict(grad_norm(self, norm_type=2))
 
@@ -243,6 +276,8 @@ class BaseTask(pl.LightningModule):
         for metric in self.valid_metrics.values():
             metric.to(self.device)
             metric.reset()
+        if self.use_ema:
+            self.ema.apply()
 
     def _validation_step(self, sample, batch_idx):
         """
@@ -286,6 +321,8 @@ class BaseTask(pl.LightningModule):
         self.log('val_loss', loss_vals['total_loss'], on_epoch=True, prog_bar=True, logger=False, sync_dist=True)
         self.logger.log_metrics({f'validation/{k}': v for k, v in loss_vals.items()}, step=self.global_step)
         self.logger.log_metrics({f'metrics/{k}': v for k, v in metric_vals.items()}, step=self.global_step)
+        if self.use_ema:
+            self.ema.restore()
 
     # noinspection PyMethodMayBeStatic
     def build_scheduler(self, optimizer):
@@ -380,7 +417,8 @@ class BaseTask(pl.LightningModule):
         return self.validation_step(sample, batch_idx)
 
     def on_test_end(self):
-        return self.on_validation_end()
+        if self.use_ema and self.ema.applied:
+            self.ema.restore()
 
     ###########
     # Running configuration
@@ -467,10 +505,20 @@ class BaseTask(pl.LightningModule):
         if isinstance(self.model, CategorizedModule):
             checkpoint['category'] = self.model.category
         checkpoint['trainer_stage'] = self.trainer.state.stage.value
+        if self.use_ema:
+            checkpoint['ema_state_dict'] = self.ema.state_dict()
 
     def on_load_checkpoint(self, checkpoint):
         from lightning.pytorch.trainer.states import RunningStage
         from utils import simulate_lr_scheduler
+
+        if self.use_ema:
+            ema_state_dict = checkpoint.get('ema_state_dict')
+            if ema_state_dict is None:
+                rank_zero_info('| EMA state not found in checkpoint; initializing from restored model parameters.')
+                self._ema_needs_register = True
+            else:
+                self.ema.load_state_dict(ema_state_dict, strict=True)
         if checkpoint.get('trainer_stage', '') == RunningStage.VALIDATING.value:
             self.skip_immediate_validation = True
 

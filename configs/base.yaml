@@ -92,3 +92,12 @@ finetune_strict_shapes: true
 
 freezing_enabled: false
 frozen_params: []
+
+###########
+# exponential moving average
+###########
+ema_enabled: false
+ema_decay: 0.999
+ema_include_params:
+  - 'model.*'
+ema_exclude_params: []
