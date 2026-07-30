@@ -223,10 +223,18 @@ class BaseTask(pl.LightningModule):
         """
         raise NotImplementedError()
 
-    def on_fit_start(self):
+    def _register_ema_if_needed(self):
         if self.use_ema and self._ema_needs_register:
             self.ema.register()
             self._ema_needs_register = False
+
+    def _apply_ema_for_evaluation(self):
+        if self.use_ema:
+            self._register_ema_if_needed()
+            self.ema.apply()
+
+    def on_fit_start(self):
+        self._register_ema_if_needed()
 
     def on_train_epoch_start(self):
         if self.training_sampler is not None:
@@ -276,8 +284,7 @@ class BaseTask(pl.LightningModule):
         for metric in self.valid_metrics.values():
             metric.to(self.device)
             metric.reset()
-        if self.use_ema:
-            self.ema.apply()
+        self._apply_ema_for_evaluation()
 
     def _validation_step(self, sample, batch_idx):
         """

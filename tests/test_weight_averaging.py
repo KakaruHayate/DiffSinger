@@ -1,8 +1,10 @@
 import unittest
+from unittest.mock import Mock
 
 import torch
 from torch import nn
 
+from basics.base_task import BaseTask
 from training.weight_averaging import ExponentialMovingAverage
 
 
@@ -70,6 +72,22 @@ class ExponentialMovingAverageTest(unittest.TestCase):
                 self.ema.apply()
         finally:
             self.ema.restore()
+
+
+class BaseTaskEmaLifecycleTest(unittest.TestCase):
+    def test_non_fit_evaluation_registers_restored_weights_before_apply(self):
+        task = object.__new__(BaseTask)
+        task.use_ema = True
+        task._ema_needs_register = True
+        calls = []
+        task.ema = Mock()
+        task.ema.register.side_effect = lambda: calls.append('register')
+        task.ema.apply.side_effect = lambda: calls.append('apply')
+
+        task._apply_ema_for_evaluation()
+
+        self.assertEqual(calls, ['register', 'apply'])
+        self.assertFalse(task._ema_needs_register)
 
 
 if __name__ == '__main__':
