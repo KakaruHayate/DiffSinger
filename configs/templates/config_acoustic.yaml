@@ -104,6 +104,11 @@ shallow_diffusion_args:
   aux_decoder_grad: 0.1
 lambda_aux_mel_loss: 0.2
 
+# Explorative Modeling is currently available for full-depth Rectified Flow.
+# Set use_shallow_diffusion=false before raising xm_best_of_k above 1.
+xm_best_of_k: 1
+xm_chunk_size: 1
+
 optimizer_args:
   optimizer_cls: modules.optimizer.muon.Muon_AdamW
   lr: 0.0006

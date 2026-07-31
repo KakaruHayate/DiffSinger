@@ -81,11 +81,21 @@ class DiffSingerAcoustic(CategorizedModule, ParameterAdaptorModule):
         else:
             raise NotImplementedError(self.diffusion_type)
 
+    def encode_condition(
+            self, txt_tokens, mel2ph, f0, key_shift=None, speed=None,
+            spk_embed_id=None, languages=None, **kwargs
+    ):
+        return self.fs2(
+            txt_tokens, mel2ph, f0, key_shift=key_shift, speed=speed,
+            spk_embed_id=spk_embed_id, languages=languages,
+            **kwargs
+        )
+
     def forward(
             self, txt_tokens, mel2ph, f0, key_shift=None, speed=None,
             spk_embed_id=None, languages=None, gt_mel=None, infer=True, **kwargs
     ) -> ShallowDiffusionOutput:
-        condition = self.fs2(
+        condition = self.encode_condition(
             txt_tokens, mel2ph, f0, key_shift=key_shift, speed=speed,
             spk_embed_id=spk_embed_id, languages=languages,
             **kwargs

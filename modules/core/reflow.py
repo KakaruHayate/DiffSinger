@@ -33,35 +33,48 @@ class RectifiedFlow(nn.Module):
         self.register_buffer('spec_min', spec_min, persistent=False)
         self.register_buffer('spec_max', spec_max, persistent=False)
 
-    def p_losses(self, x_end, t, cond):
-        x_start = torch.randn_like(x_end)
+    def prepare_training_inputs(self, gt_spec, t=None, noise=None):
+        spec = self.norm_spec(gt_spec).transpose(-2, -1)
+        if self.num_feats == 1:
+            spec = spec[:, None, :, :]
+        batch_size = spec.shape[0]
+        if t is None:
+            t = self.t_start + (1.0 - self.t_start) * torch.rand(
+                (batch_size,), device=spec.device
+            )
+        if noise is None:
+            noise = torch.randn_like(spec)
+        return spec, t, noise
+
+    def p_losses(self, x_end, t, cond, noise=None):
+        x_start = torch.randn_like(x_end) if noise is None else noise
         x_t = x_start + t[:, None, None, None] * (x_end - x_start)
         v_pred = self.velocity_fn(x_t, t * self.time_scale_factor, cond)
 
         return v_pred, x_end - x_start
 
-    def forward(self, condition, gt_spec=None, src_spec=None, infer=True):
+    def training_forward(self, condition, gt_spec, t=None, noise=None):
         cond = condition.transpose(1, 2)
+        spec, t, noise = self.prepare_training_inputs(gt_spec, t=t, noise=noise)
+        v_pred, v_gt = self.p_losses(spec, t, cond=cond, noise=noise)
+        return v_pred, v_gt, t
+
+    def forward(self, condition, gt_spec=None, src_spec=None, infer=True):
         b, device = condition.shape[0], condition.device
 
         if not infer:
-            # gt_spec: [B, T, M] or [B, F, T, M]
-            spec = self.norm_spec(gt_spec).transpose(-2, -1)  # [B, M, T] or [B, F, M, T]
+            return self.training_forward(condition, gt_spec)
+
+        cond = condition.transpose(1, 2)
+        # src_spec: [B, T, M] or [B, F, T, M]
+        if src_spec is not None:
+            spec = self.norm_spec(src_spec).transpose(-2, -1)
             if self.num_feats == 1:
-                spec = spec[:, None, :, :]  # [B, F=1, M, T]
-            t = self.t_start + (1.0 - self.t_start) * torch.rand((b,), device=device)
-            v_pred, v_gt = self.p_losses(spec, t, cond=cond)
-            return v_pred, v_gt, t
+                spec = spec[:, None, :, :]
         else:
-            # src_spec: [B, T, M] or [B, F, T, M]
-            if src_spec is not None:
-                spec = self.norm_spec(src_spec).transpose(-2, -1)
-                if self.num_feats == 1:
-                    spec = spec[:, None, :, :]
-            else:
-                spec = None
-            x = self.inference(cond, b=b, x_end=spec, device=device)
-            return self.denorm_spec(x)
+            spec = None
+        x = self.inference(cond, b=b, x_end=spec, device=device)
+        return self.denorm_spec(x)
 
     @torch.no_grad()
     def sample_euler(self, x, t, dt, cond):
