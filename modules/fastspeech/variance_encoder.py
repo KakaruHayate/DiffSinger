@@ -50,7 +50,11 @@ class FastSpeech2Variance(nn.Module):
                 kernel_size=dur_hparams['kernel_size'],
                 offset=dur_hparams['log_offset'],
                 dur_loss_type=dur_hparams['loss_type'],
-                arch=dur_hparams['arch']
+                arch=dur_hparams['arch'],
+                use_sdp=hparams.get('use_sdp', False),
+                sdp_ratio=hparams.get('sdp_ratio', 0.2),
+                sdp_n_chans=hparams.get('sdp_n_chans', 192),
+                gin_channels=hparams['hidden_size'] if hparams['use_spk_id'] else 0,
             )
 
     def forward(
@@ -65,10 +69,8 @@ class FastSpeech2Variance(nn.Module):
         :param ph2word: (train, infer) [B, T_ph]
         :param ph_dur: (train, [infer]) [B, T_ph]
         :param word_dur: (infer) [B, T_w]
-        :param spk_embed: (train) [B, T_ph, H]
-        :param languages (train, infer) [B, T_ph]
-        :param infer: whether inference
-        :return: encoder_out, ph_dur_pred
+        :param spk_embed: (train) [B, H]
+        :return: encoder_out, ph_dur_pred, sdp_loss, sdp_pred
         """
         txt_embed = self.txt_embed(txt_tokens)
         if self.linguistic_mode == 'word':
@@ -87,22 +89,31 @@ class FastSpeech2Variance(nn.Module):
             extra_embed = self.ph_dur_embed(torch.log(1 + ph_dur.float())[:, :, None])
         else:
             extra_embed = self.ph_dur_embed(ph_dur.float()[:, :, None])
-            
+
         if self.use_lang_id:
             lang_embed = self.lang_embed(languages)
             extra_embed += lang_embed
         encoder_out = self.encoder(txt_embed, extra_embed, txt_tokens == 0)
 
+        sdp_loss = None
+        sdp_pred = None
         if self.predict_dur:
             midi_embed = self.midi_embed(midi)  # => [B, T_ph, H]
             dur_cond = encoder_out + midi_embed
+            sdp_cond = dur_cond
             if spk_embed is not None:
-                dur_cond += spk_embed
-            ph_dur_pred = self.dur_predictor(dur_cond, x_masks=txt_tokens == PAD_INDEX, infer=infer)
+                dur_cond = dur_cond + spk_embed
+                g = spk_embed
+            else:
+                g = None
+            ph_dur_pred, sdp_loss, sdp_pred = self.dur_predictor(
+                dur_cond, x_masks=txt_tokens == PAD_INDEX, infer=infer,
+                ph_dur=ph_dur, sdp_cond=sdp_cond, spk_embed=g
+            )
 
-            return encoder_out, ph_dur_pred
+            return encoder_out, ph_dur_pred, sdp_loss, sdp_pred
         else:
-            return encoder_out, None
+            return encoder_out, None, sdp_loss, sdp_pred
 
 
 class MelodyEncoder(nn.Module):

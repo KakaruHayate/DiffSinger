@@ -6,6 +6,7 @@ from torch.nn import functional as F
 from modules.commons.rotary_embedding_torch import RotaryEmbedding
 from modules.commons.common_layers import SinusoidalPositionalEmbedding, EncSALayer, AdamWLinear
 from modules.commons.espnet_positional_embedding import RelPositionalEncoding
+from modules.sdp.sdp import StochasticDurationPredictor
 
 DEFAULT_MAX_SOURCE_POSITIONS = 2000
 DEFAULT_MAX_TARGET_POSITIONS = 2000
@@ -65,7 +66,8 @@ class DurationPredictor(torch.nn.Module):
     """
 
     def __init__(self, in_dims, n_layers=2, n_chans=384, kernel_size=3,
-                 dropout_rate=0.1, offset=1.0, dur_loss_type='mse', arch='resnet'):
+                 dropout_rate=0.1, offset=1.0, dur_loss_type='mse', arch='resnet',
+                 use_sdp=False, sdp_ratio=0.2, sdp_n_chans=192, gin_channels=0):
         """Initialize duration predictor module.
         Args:
             in_dims (int): Input dimension.
@@ -74,6 +76,12 @@ class DurationPredictor(torch.nn.Module):
             kernel_size (int, optional): Kernel size of convolutional layers.
             dropout_rate (float, optional): Dropout rate.
             offset (float, optional): Offset value to avoid nan in log domain.
+            dur_loss_type (str, optional): Loss type ('mse', 'huber', etc.).
+            arch (str, optional): Architecture type ('resnet' or standard CNN).
+            use_sdp (bool, optional): Whether to use Stochastic Duration Predictor.
+            sdp_ratio (float, optional): Interpolation ratio between SDP and DP outputs during inference.
+            sdp_n_chans (int, optional): Hidden channels for SDP.
+            gin_channels (int, optional): Speaker embedding channels for SDP conditioning.
         """
         super(DurationPredictor, self).__init__()
         self.offset = offset
@@ -115,6 +123,21 @@ class DurationPredictor(torch.nn.Module):
             raise NotImplementedError()
         self.linear = AdamWLinear(n_chans, self.out_dims)
 
+        self.use_sdp = use_sdp
+        self.sdp_ratio = sdp_ratio
+
+        if self.use_sdp:
+            self.sdp = StochasticDurationPredictor(
+                in_channels=in_dims,
+                filter_channels=sdp_n_chans,
+                kernel_size=3,
+                p_dropout=0.5,
+                n_flows=4,
+                gin_channels=gin_channels
+            )
+        else:
+            self.sdp = None
+
     def out2dur(self, xs):
         if self.loss_type in ['mse', 'huber']:
             # NOTE: calculate loss in log domain
@@ -125,33 +148,87 @@ class DurationPredictor(torch.nn.Module):
             raise NotImplementedError()
         return dur
 
-    def forward(self, xs, x_masks=None, infer=True):
+    def forward(self, xs, x_masks=None, infer=True, ph_dur=None, sdp_cond=None, spk_embed=None):
         """Calculate forward propagation.
         Args:
             xs (Tensor): Batch of input sequences (B, Tmax, idim).
             x_masks (BoolTensor, optional): Batch of masks indicating padded part (B, Tmax).
             infer (bool): Whether inference
+            ph_dur (Tensor, optional): Ground truth phoneme duration [B, Tmax]. Needed for SDP training.
+            sdp_cond (Tensor, optional): Conditioning sequence for SDP [B, Tmax, idim].
+            spk_embed (Tensor, optional): Speaker embedding [B, gin_channels].
+
         Returns:
-            (train) FloatTensor, (infer) LongTensor: Batch of predicted durations in linear domain (B, Tmax).
+            tuple:
+                - dur_pred (Tensor): Final predicted linear durations [B, Tmax].
+                - loss_sdp (Tensor or int): SDP negative log-likelihood flow loss (0 if not using SDP or inferring).
+                - sdp_pred (Tensor or None): SDP reverse prediction for MSE regression computing.
         """
-        xs = xs.transpose(1, -1)  # (B, idim, Tmax)
-        masks = 1 - x_masks.float()
-        masks_ = masks[:, None, :]
+        non_pad_mask = 1.0 - x_masks.float()         # [B, Tmax]
+        non_pad_mask_1d = non_pad_mask.unsqueeze(1)  # [B, 1, Tmax]
+        non_pad_mask_2d = non_pad_mask.unsqueeze(2)  # [B, Tmax, 1]
+        g = spk_embed.transpose(1, -1) if spk_embed is not None else None  # [B, gin_chans, 1]
+        dp_xs = xs.transpose(1, -1)  # [B, Tmax, idim] -> [B, idim, Tmax]
         for idx, f in enumerate(self.conv):
             if self.use_resnet:
-                residual = self.res_conv(xs) if idx == 0 and self.res_conv is not None else xs
-                xs = residual + f(xs)
+                residual = self.res_conv(dp_xs) if (idx == 0 and self.res_conv is not None) else dp_xs
+                dp_xs = residual + f(dp_xs)
             else:
-                xs = f(xs)
-            if x_masks is not None:
-                xs = xs * masks_
-        xs = self.linear(xs.transpose(1, -1))  # [B, T, C]
-        xs = xs * masks[:, :, None]  # (B, T, C)
+                dp_xs = f(dp_xs)
 
-        dur_pred = self.out2dur(xs)
+            if x_masks is not None:
+                dp_xs = dp_xs * non_pad_mask_1d
+
+        dp_xs = self.linear(dp_xs.transpose(1, -1))  # [B, idim, Tmax] -> [B, Tmax, C]
+        dp_xs = dp_xs * non_pad_mask_2d              # Mask padded areas [B, Tmax, C]
+
+        dur_pred = self.out2dur(dp_xs)               # Convert to linear domain [B, Tmax]
+
+        loss_sdp = 0.0
+        sdp_pred = None
+
+        if self.use_sdp and sdp_cond is not None:
+            sdp_cond_t = sdp_cond.transpose(1, -1)   # [B, idim, Tmax]
+
+            if not infer:
+                nll_loss = self.sdp(
+                    x=sdp_cond_t,
+                    x_mask=non_pad_mask_1d,
+                    w=ph_dur,
+                    g=g,
+                    reverse=False,
+                    noise_scale=1.0
+                )
+
+                l_length_sdp = nll_loss / torch.sum(non_pad_mask_1d)
+                loss_sdp = torch.sum(l_length_sdp.float())
+
+                logw_sdp = self.sdp(
+                    x=sdp_cond_t,
+                    x_mask=non_pad_mask_1d,
+                    g=g,
+                    reverse=True,
+                    noise_scale=1.0
+                )
+                sdp_pred_continuous = self.out2dur(logw_sdp.transpose(1, -1) * non_pad_mask_2d)
+                sdp_pred = sdp_pred_continuous + (torch.ceil(sdp_pred_continuous) - sdp_pred_continuous).detach()
+
+            else:
+                logw_sdp = self.sdp(
+                    x=sdp_cond_t,
+                    x_mask=non_pad_mask_1d,
+                    g=g,
+                    reverse=True,
+                    noise_scale=0.8
+                )
+                sdp_pred = torch.ceil(self.out2dur(logw_sdp.transpose(1, -1) * non_pad_mask_2d))
+
+                dur_pred = (sdp_pred * self.sdp_ratio) + (dur_pred * (1.0 - self.sdp_ratio))
+
         if infer:
-            dur_pred = dur_pred.clamp(min=0.)  # avoid negative value
-        return dur_pred
+            return dur_pred.clamp(min=0.0), None, sdp_pred
+        else:
+            return dur_pred, loss_sdp, sdp_pred
 
 
 class VariancePredictor(torch.nn.Module):
