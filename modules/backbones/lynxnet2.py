@@ -4,8 +4,10 @@ import torch.nn.functional as F
 
 from modules.commons.common_layers import (
     ATanGLU,
+    AdamWConv1d,
     AdamWLinear,
     DoubleSoftSignGLU,
+    FP16LayerNorm,
     SinusoidalPosEmb,
     SoftSignGLU,
     SwiGLU,
@@ -34,9 +36,9 @@ class LYNXNet2Block(nn.Module):
         else:
             _dropout = nn.Identity()
         self.net = nn.Sequential(
-            nn.LayerNorm(dim),
+            FP16LayerNorm(dim),
             Transpose((1, 2)),
-            nn.Conv1d(dim, dim, kernel_size=kernel_size, padding=kernel_size // 2, groups=dim),
+            AdamWConv1d(dim, dim, kernel_size=kernel_size, padding=kernel_size // 2, groups=dim),
             Transpose((1, 2)),
             nn.Linear(dim, inner_dim * 2),
             _glu,

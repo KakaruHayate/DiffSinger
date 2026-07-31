@@ -45,7 +45,7 @@ class LYNXConvModule(nn.Module):
             Transpose((1, 2)),
             nn.Conv1d(dim, inner_dim * 2, 1),
             SwiGLU(dim=1),
-            nn.Conv1d(inner_dim, inner_dim, kernel_size=kernel_size, padding=padding[0], groups=inner_dim),
+            AdamWConv1d(inner_dim, inner_dim, kernel_size=kernel_size, padding=padding[0], groups=inner_dim),
             _activation,
             nn.Conv1d(inner_dim, dim, 1),
             Transpose((1, 2)),
