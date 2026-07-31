@@ -94,6 +94,17 @@ class AcousticTask(BaseTask):
             self.required_variances.append('voicing')
         if hparams['use_tension_embed']:
             self.required_variances.append('tension')
+        self.xm_best_of_k = int(hparams.get('xm_best_of_k', 1))
+        self.xm_chunk_size = int(hparams.get('xm_chunk_size', 1))
+        if self.xm_best_of_k < 1:
+            raise ValueError('xm_best_of_k must be at least 1.')
+        if self.xm_chunk_size < 1:
+            raise ValueError('xm_chunk_size must be at least 1.')
+        if self.xm_best_of_k > 1:
+            if self.diffusion_type != 'reflow':
+                raise ValueError('Explorative Modeling currently supports Rectified Flow only.')
+            if self.use_shallow_diffusion:
+                raise ValueError('Explorative Modeling currently requires use_shallow_diffusion=false.')
         super()._finish_init()
 
         # ── Fuse LYNXNet2 backbone kernels (in-place) ──
@@ -150,6 +161,58 @@ class AcousticTask(BaseTask):
             raise ValueError(f"Unknown diffusion type: {self.diffusion_type}")
         self.register_validation_loss('mel_loss')
 
+    def _run_reflow_xm(self, condition, target, non_padding):
+        diffusion = self.model.diffusion
+        spec, t, _ = diffusion.prepare_training_inputs(target)
+        batch_size = spec.shape[0]
+        best_losses = torch.full((batch_size,), float('inf'), device=spec.device)
+        best_noise = torch.empty_like(spec)
+        # The winning candidate is replayed after a no-grad search, so every
+        # stochastic state except the explored noise must remain identical.
+        dropout_modules = [
+            module for module in diffusion.modules()
+            if isinstance(module, torch.nn.Dropout) and module.p > 0.
+        ]
+        if dropout_modules:
+            raise RuntimeError(
+                'Explorative Modeling save-memory replay requires diffusion backbone dropout_rate=0.'
+            )
+
+        num_chunks = math.ceil(self.xm_best_of_k / self.xm_chunk_size)
+        with torch.no_grad():
+            for chunk_idx in range(num_chunks):
+                chunk_candidates = min(
+                    self.xm_chunk_size,
+                    self.xm_best_of_k - chunk_idx * self.xm_chunk_size
+                )
+                noise = torch.randn(
+                    (chunk_candidates, *spec.shape),
+                    device=spec.device,
+                    dtype=spec.dtype
+                )
+                chunk_condition = torch.cat([condition.detach()] * chunk_candidates, dim=0)
+                chunk_target = torch.cat([target] * chunk_candidates, dim=0)
+                chunk_t = torch.cat([t] * chunk_candidates, dim=0)
+                chunk_non_padding = torch.cat([non_padding] * chunk_candidates, dim=0)
+                v_pred, v_gt, _ = diffusion.training_forward(
+                    chunk_condition, chunk_target,
+                    t=chunk_t, noise=noise.flatten(0, 1)
+                )
+                chunk_losses = self.mel_loss(
+                    v_pred, v_gt, t=chunk_t,
+                    non_padding=chunk_non_padding, reduction='none'
+                ).reshape(chunk_candidates, batch_size)
+                chunk_best_losses, chunk_best_indices = chunk_losses.min(dim=0)
+                batch_indices = torch.arange(batch_size, device=spec.device)
+                chunk_best_noise = noise[chunk_best_indices, batch_indices]
+                replace = chunk_best_losses < best_losses
+                best_losses[replace] = chunk_best_losses[replace]
+                best_noise[replace] = chunk_best_noise[replace]
+
+        if hasattr(torch, 'clear_autocast_cache'):
+            torch.clear_autocast_cache()
+        return diffusion.training_forward(condition, target, t=t, noise=best_noise)
+
     def run_model(self, sample, infer=False):
         txt_tokens = sample['tokens']  # [B, T_ph]
         target = sample['mel']  # [B, T_s, M]
@@ -170,12 +233,23 @@ class AcousticTask(BaseTask):
             languages = sample['languages']
         else:
             languages = None
-        output: ShallowDiffusionOutput = self.model(
-            txt_tokens, mel2ph=mel2ph, f0=f0, **variances,
-            key_shift=key_shift, speed=speed,
-            spk_embed_id=spk_embed_id, languages=languages,
-            gt_mel=target, infer=infer
-        )
+        if not infer and self.xm_best_of_k > 1:
+            condition = self.model.encode_condition(
+                txt_tokens, mel2ph=mel2ph, f0=f0, **variances,
+                key_shift=key_shift, speed=speed,
+                spk_embed_id=spk_embed_id, languages=languages
+            )
+            non_padding = (mel2ph > 0).unsqueeze(-1).float()
+            output = ShallowDiffusionOutput(
+                diff_out=self._run_reflow_xm(condition, target, non_padding)
+            )
+        else:
+            output: ShallowDiffusionOutput = self.model(
+                txt_tokens, mel2ph=mel2ph, f0=f0, **variances,
+                key_shift=key_shift, speed=speed,
+                spk_embed_id=spk_embed_id, languages=languages,
+                gt_mel=target, infer=infer
+            )
 
         if infer:
             return output
