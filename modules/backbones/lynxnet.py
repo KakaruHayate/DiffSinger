@@ -2,10 +2,17 @@
 # https://github.com/CNChTu/Diffusion-SVC/blob/v2.0_dev/diffusion/naive_v2/model_conformer_naive.py
 # https://github.com/CNChTu/Diffusion-SVC/blob/v2.0_dev/diffusion/naive_v2/naive_v2_diff.py
 
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from modules.commons.common_layers import SinusoidalPosEmb, SwiGLU, Transpose, AdamWConv1d
+from modules.commons.common_layers import (
+    AdamWConv1d,
+    SinusoidalPosEmb,
+    SwiGLU,
+    Transpose,
+    interpolate_dual_timestep_embedding,
+)
 from modules.commons.common_layers import KaimingNormalConv1d as Conv1d
 from utils.hparams import hparams
 
@@ -109,7 +116,7 @@ class LYNXNet(nn.Module):
         self.strong_cond = strong_cond
         nn.init.zeros_(self.output_projection.weight)
 
-    def forward(self, spec, diffusion_step, cond):
+    def forward(self, spec, diffusion_step, cond, diffusion_step_2=None, mask=None):
         """
         :param spec: [B, F, M, T]
         :param diffusion_step: [B, 1]
@@ -126,10 +133,15 @@ class LYNXNet(nn.Module):
         if not self.strong_cond:
             x = F.gelu(x)
 
-        diffusion_step = self.diffusion_embedding(diffusion_step).unsqueeze(-1)
+        step = interpolate_dual_timestep_embedding(
+            self.diffusion_embedding,
+            diffusion_step,
+            diffusion_step_2,
+            mask,
+        )
 
         for layer in self.residual_layers:
-            x = layer(x, cond, diffusion_step, front_cond_inject=self.strong_cond)
+            x = layer(x, cond, step.transpose(1, 2), front_cond_inject=self.strong_cond)
 
         # post-norm
         x = self.norm(x.transpose(1, 2)).transpose(1, 2)

@@ -2,7 +2,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from modules.commons.common_layers import SinusoidalPosEmb, SwiGLU, ATanGLU, Transpose, AdamWLinear
+from modules.commons.common_layers import (
+    ATanGLU,
+    AdamWLinear,
+    SinusoidalPosEmb,
+    SwiGLU,
+    Transpose,
+    interpolate_dual_timestep_embedding,
+)
 from utils.hparams import hparams
 
 
@@ -77,7 +84,7 @@ class LYNXNet2(nn.Module):
         nn.init.kaiming_normal_(self.conditioner_projection.weight)
         nn.init.zeros_(self.output_projection.weight)
 
-    def forward(self, spec, diffusion_step, cond):
+    def forward(self, spec, diffusion_step, cond, diffusion_step_2=None, mask=None):
         """
         :param spec: [B, F, M, T]
         :param diffusion_step: [B, 1]
@@ -95,7 +102,14 @@ class LYNXNet2(nn.Module):
             x = x + self.conditioner_projection(cond).transpose(1, 2)
         else:
             x = x + self.conditioner_projection(cond.transpose(1, 2))
-        x = x + self.diffusion_embedding(diffusion_step).unsqueeze(1)
+
+        step = interpolate_dual_timestep_embedding(
+            self.diffusion_embedding,
+            diffusion_step,
+            diffusion_step_2,
+            mask,
+        )
+        x = x + step
 
         for layer in self.residual_layers:
             x = layer(x)
