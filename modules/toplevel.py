@@ -245,7 +245,7 @@ class DiffSingerVariance(CategorizedModule, ParameterAdaptorModule):
             base_pitch=None, pitch=None, pitch_expr=None, pitch_retake=None,
             variance_retake: Dict[str, Tensor] = None,
             spk_id=None, languages=None,
-            infer=True, **kwargs
+            infer=True, pitch_predictor_fn=None, variance_predictor_fn=None, **kwargs
     ):
         if self.use_spk_id:
             ph_spk_mix_embed = kwargs.get('ph_spk_mix_embed')
@@ -343,7 +343,11 @@ class DiffSingerVariance(CategorizedModule, ParameterAdaptorModule):
             if infer:
                 pitch_pred_out = self.pitch_predictor(pitch_cond, infer=True)
             else:
-                pitch_pred_out = self.pitch_predictor(pitch_cond, pitch - base_pitch, infer=False)
+                pitch_target = pitch - base_pitch
+                if pitch_predictor_fn is None:
+                    pitch_pred_out = self.pitch_predictor(pitch_cond, pitch_target, infer=False)
+                else:
+                    pitch_pred_out = pitch_predictor_fn(pitch_cond, pitch_target)
         else:
             pitch_pred_out = None
 
@@ -366,7 +370,10 @@ class DiffSingerVariance(CategorizedModule, ParameterAdaptorModule):
             ]
             var_cond += torch.stack(variance_embeds, dim=-1).sum(-1)
 
-        variance_outputs = self.variance_predictor(var_cond, variance_inputs, infer=infer)
+        if not infer and variance_predictor_fn is not None:
+            variance_outputs = variance_predictor_fn(var_cond, variance_inputs)
+        else:
+            variance_outputs = self.variance_predictor(var_cond, variance_inputs, infer=infer)
 
         if infer:
             variances_pred_out = self.collect_variance_outputs(variance_outputs)

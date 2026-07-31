@@ -119,6 +119,12 @@ lambda_dur_loss: 1.0
 lambda_pitch_loss: 1.0
 lambda_var_loss: 1.0
 
+# Low-memory Forward XM is available for Rectified Flow pitch/variance
+# predictors. Enable either predictor independently by raising its K above 1.
+xm_pitch_best_of_k: 1
+xm_variance_best_of_k: 1
+xm_chunk_size: 1
+
 optimizer_args:
   optimizer_cls: modules.optimizer.muon.Muon_AdamW
   lr: 0.0006

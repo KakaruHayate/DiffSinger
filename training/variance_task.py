@@ -8,6 +8,7 @@ import utils
 import utils.infer_utils
 from basics.base_dataset import BaseDataset
 from basics.base_task import BaseTask
+from modules.core.xm import run_reflow_xm
 from modules.losses import DurationLoss, DiffusionLoss, RectifiedFlowLoss
 from modules.metrics import (
     RawCurveAccuracy, RawCurveR2Score, RhythmCorrectness, PhonemeDurationAccuracy
@@ -113,6 +114,18 @@ class VarianceTask(BaseTask):
             self.variance_prediction_list.append('tension')
         self.predict_variances = len(self.variance_prediction_list) > 0
         self.lambda_var_loss = hparams['lambda_var_loss']
+        self.xm_pitch_best_of_k = int(hparams.get('xm_pitch_best_of_k', 1))
+        self.xm_variance_best_of_k = int(hparams.get('xm_variance_best_of_k', 1))
+        self.xm_chunk_size = int(hparams.get('xm_chunk_size', 1))
+        if min(self.xm_pitch_best_of_k, self.xm_variance_best_of_k, self.xm_chunk_size) < 1:
+            raise ValueError('XM best-of-K values and xm_chunk_size must be at least 1.')
+        if (self.xm_pitch_best_of_k > 1 or self.xm_variance_best_of_k > 1) \
+                and self.diffusion_type != 'reflow':
+            raise ValueError('Explorative Modeling currently supports Rectified Flow only.')
+        if self.xm_pitch_best_of_k > 1 and not self.predict_pitch:
+            raise ValueError('xm_pitch_best_of_k > 1 requires predict_pitch=true.')
+        if self.xm_variance_best_of_k > 1 and not self.predict_variances:
+            raise ValueError('xm_variance_best_of_k > 1 requires at least one predicted variance.')
         super()._finish_init()
 
     def _build_model(self):
@@ -159,6 +172,23 @@ class VarianceTask(BaseTask):
             for name in self.variance_prediction_list:
                 self.register_validation_metric(f'{name}_r2', RawCurveR2Score())
 
+    def _build_xm_predictor(self, predictor, loss_fn, non_padding, best_of_k):
+        if best_of_k == 1:
+            return None
+
+        def predictor_fn(condition, target):
+            return run_reflow_xm(
+                predictor,
+                condition,
+                target,
+                loss_fn,
+                non_padding,
+                best_of_k,
+                self.xm_chunk_size,
+            )
+
+        return predictor_fn
+
     def run_model(self, sample, infer=False):
         spk_ids = sample['spk_ids'] if self.use_spk_id else None  # [B,]
         languages = sample['languages'] if self.use_lang_id else None  # [B,]
@@ -195,6 +225,25 @@ class VarianceTask(BaseTask):
                     for v_name in self.variance_prediction_list
                 }
 
+        non_padding = (mel2ph > 0).unsqueeze(-1) if mel2ph is not None else None
+        pitch_predictor_fn = None
+        variance_predictor_fn = None
+        if not infer:
+            if self.predict_pitch:
+                pitch_predictor_fn = self._build_xm_predictor(
+                    self.model.pitch_predictor,
+                    self.pitch_loss,
+                    non_padding,
+                    self.xm_pitch_best_of_k,
+                )
+            if self.predict_variances:
+                variance_predictor_fn = self._build_xm_predictor(
+                    self.model.variance_predictor,
+                    self.var_loss,
+                    non_padding,
+                    self.xm_variance_best_of_k,
+                )
+
         output = self.model(
             txt_tokens, languages=languages,
             midi=midi, ph2word=ph2word,
@@ -204,7 +253,9 @@ class VarianceTask(BaseTask):
             base_pitch=base_pitch, pitch=pitch,
             energy=energy, breathiness=breathiness, voicing=voicing, tension=tension,
             pitch_retake=pitch_retake, variance_retake=variance_retake,
-            spk_id=spk_ids, infer=infer
+            spk_id=spk_ids, infer=infer,
+            pitch_predictor_fn=pitch_predictor_fn,
+            variance_predictor_fn=variance_predictor_fn,
         )
 
         dur_pred, pitch_pred, variances_pred = output
@@ -216,7 +267,6 @@ class VarianceTask(BaseTask):
             losses = {}
             if dur_pred is not None:
                 losses['dur_loss'] = self.lambda_dur_loss * self.dur_loss(dur_pred, ph_dur, ph2word=ph2word)
-            non_padding = (mel2ph > 0).unsqueeze(-1) if mel2ph is not None else None
             if pitch_pred is not None:
                 if self.diffusion_type == 'ddpm':
                     pitch_x_recon, pitch_noise = pitch_pred
