@@ -43,6 +43,32 @@ class AdamWLinear(torch.nn.Linear):
             nn.init.constant_(self.bias, 0.)
 
 
+class FP16LayerNorm(torch.nn.LayerNorm):
+    """Run LayerNorm entirely in FP16 during CUDA FP16 training."""
+
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        if not self.training or not input.is_cuda:
+            return super().forward(input)
+
+        target_dtype = input.dtype
+        if torch.is_autocast_enabled():
+            target_dtype = torch.get_autocast_gpu_dtype()
+        if target_dtype != torch.float16:
+            return super().forward(input)
+
+        with torch.autocast(device_type='cuda', enabled=False):
+            input_fp16 = input.to(dtype=torch.float16)
+            weight_fp16 = None if self.weight is None else self.weight.to(dtype=torch.float16)
+            bias_fp16 = None if self.bias is None else self.bias.to(dtype=torch.float16)
+            return F.layer_norm(
+                input_fp16,
+                self.normalized_shape,
+                weight_fp16,
+                bias_fp16,
+                self.eps,
+            )
+
+
 class XavierUniformInitLinear(torch.nn.Linear):
     def __init__(
             self,
@@ -469,8 +495,8 @@ class LaurelBlock(nn.Module):
     """Laurel residual connection block."""
     def __init__(self, dim, bottleneck_dim=64):
         super().__init__()
-        self.down_proj = nn.Linear(dim, bottleneck_dim, bias=False)
-        self.up_proj = nn.Linear(bottleneck_dim, dim, bias=False)
+        self.down_proj = AdamWLinear(dim, bottleneck_dim, bias=False)
+        self.up_proj = AdamWLinear(bottleneck_dim, dim, bias=False)
         self.norm = LayerNorm(dim)
 
     def forward(self, x):
