@@ -172,7 +172,7 @@ def rational_quadratic_spline(
             if (discriminant < 0).any():
                 min_val = torch.min(discriminant).item()
                 raise RuntimeError(f"Flow crush: The discriminant yields a negative number (minimum value: {min_val}).")
-        
+
         discriminant = torch.clamp_min(discriminant, 0.0)
 
         root = (2 * c) / (-b - torch.sqrt(discriminant))
