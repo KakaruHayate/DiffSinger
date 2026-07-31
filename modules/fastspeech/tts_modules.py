@@ -20,7 +20,8 @@ class TransformerEncoderLayer(nn.Module):
             attention_dropout=0.0, relu_dropout=dropout,
             kernel_size=kernel_size,
             act=act, rotary_embed=rotary_embed,
-            layer_idx=layer_idx, mix_ln_layer=mix_ln_layer,use_laurel_block=use_laurel_block
+            layer_idx=layer_idx, mix_ln_layer=mix_ln_layer,
+            use_laurel_block=use_laurel_block
         )
 
     def forward(self, x, **kwargs):
@@ -387,7 +388,9 @@ class FastSpeech2Encoder(nn.Module):
                     "RoPE requires the hidden size to be multiple of "
                     f"num_heads * 2 = {num_heads * 2}, but got {embed_dim}."
                 )
-            rotary_embed = RotaryEmbedding(dim=embed_dim // num_heads,theta=rope_theta, interleaved=rope_interleaved)
+            rotary_embed = RotaryEmbedding(
+                dim=embed_dim // num_heads, theta=rope_theta, interleaved=rope_interleaved
+            )
         else:
             rotary_embed = None
         self.layers = nn.ModuleList([

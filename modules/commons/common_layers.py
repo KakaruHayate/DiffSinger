@@ -464,8 +464,9 @@ class MultiheadSelfAttentionWithRoPE(nn.Module):
 
         return output
 
+
 class LaurelBlock(nn.Module):
-    """Laurel residual connection block"""
+    """Laurel residual connection block."""
     def __init__(self, dim, bottleneck_dim=64):
         super().__init__()
         self.down_proj = nn.Linear(dim, bottleneck_dim, bias=False)
@@ -479,10 +480,11 @@ class LaurelBlock(nn.Module):
         x = self.norm(x)
         return residual + x
 
+
 class EncSALayer(nn.Module):
     def __init__(self, c, num_heads, dropout, attention_dropout=0.1,
                  relu_dropout=0.1, kernel_size=9, act='gelu', rotary_embed=None,
-                 layer_idx=None, mix_ln_layer=None,use_laurel_block=False
+                 layer_idx=None, mix_ln_layer=None, use_laurel_block=False
                  ):
         super().__init__()
         self.dropout = dropout
@@ -511,7 +513,7 @@ class EncSALayer(nn.Module):
         self.ffn = TransformerFFNLayer(
             c, 4 * c, kernel_size=kernel_size, dropout=relu_dropout, act=act
         )
-        
+
         self.use_laurel_block = use_laurel_block
         if self.use_laurel_block:
             self.laurel = LaurelBlock(c)
