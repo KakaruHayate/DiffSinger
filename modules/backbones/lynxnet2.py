@@ -7,7 +7,6 @@ from modules.commons.common_layers import (
     AdamWConv1d,
     AdamWLinear,
     DoubleSoftSignGLU,
-    FP16LayerNorm,
     SinusoidalPosEmb,
     SoftSignGLU,
     SwiGLU,
@@ -36,7 +35,7 @@ class LYNXNet2Block(nn.Module):
         else:
             _dropout = nn.Identity()
         self.net = nn.Sequential(
-            FP16LayerNorm(dim),
+            nn.LayerNorm(dim),
             Transpose((1, 2)),
             AdamWConv1d(dim, dim, kernel_size=kernel_size, padding=kernel_size // 2, groups=dim),
             Transpose((1, 2)),
