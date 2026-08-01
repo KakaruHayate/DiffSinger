@@ -76,7 +76,7 @@ class RectifiedFlowLoss(nn.Module):
 
         best_loss = self.loss(best_pred, best_gt)
         if self.log_norm:
-            best_loss = self.get_weights(t) * best_loss
+            best_loss = self.get_weights(t).squeeze(2) * best_loss
         if non_padding is not None:
-            best_loss = best_loss * non_padding.transpose(1, 2).unsqueeze(1)
+            best_loss = best_loss * non_padding.transpose(1, 2)
         return best_loss.mean()

@@ -119,6 +119,47 @@ class RectifiedFlowXMTest(unittest.TestCase):
 
         self.assertTrue(torch.equal(original, expected))
 
+    def test_log_norm_with_non_uniform_padding(self):
+        """Regression test for broadcasting bug in forward_best_bin.
+
+        With log_norm=True and non-uniform padding, the post-selection
+        [B, F, T] best_loss must not be mixed across samples by 4D
+        weight/mask tensors.
+        """
+        predictor = self.build_pitch_predictor(repeat_bins=4)
+        condition = torch.randn(2, 4, 4, requires_grad=True)
+        target = torch.randn(2, 4)
+        # sample 0: all 4 frames valid; sample 1: only first 2 frames valid
+        mask = torch.tensor([
+            [[1.], [1.], [1.], [1.]],
+            [[1.], [1.], [0.], [0.]],
+        ])
+        loss_fn = RectifiedFlowLoss('l2', log_norm=True)
+
+        torch.manual_seed(999)
+        v_pred, v_gt, t = predictor(condition, gt_spec=target, infer=False)
+        xm_loss = loss_fn.forward_best_bin(v_pred, v_gt, t=t, non_padding=mask)
+        xm_loss.backward()
+
+        # Manually replicate forward_best_bin's logic
+        masked_pred, masked_gt = loss_fn._mask_non_padding(v_pred, v_gt, mask)
+        loss_all = loss_fn._forward(masked_pred, masked_gt, t=t)  # [B, F, R, T]
+        per_bin = loss_all.sum(dim=-1)  # [B, F, R]
+        mask_4d = mask.transpose(1, 2).unsqueeze(1).to(loss_all)
+        mask_sum = mask_4d.sum(dim=-1)  # [B, 1, 1]
+        per_bin = per_bin / mask_sum.expand_as(per_bin).clamp_min(1.)
+        best_idx = per_bin.argmin(dim=-1, keepdim=True)  # [B, F, 1]
+        best_idx_exp = best_idx.unsqueeze(-1).expand(-1, -1, -1, v_gt.shape[-1])
+        best_pred = masked_pred.gather(2, best_idx_exp).squeeze(2)  # [B, F, T]
+        best_gt = masked_gt.gather(2, best_idx_exp).squeeze(2)
+        best_loss = loss_fn.loss(best_pred, best_gt)
+        best_loss = loss_fn.get_weights(t).squeeze(2) * best_loss
+        best_loss = best_loss * mask.transpose(1, 2)
+        expected = best_loss.mean()
+
+        self.assertTrue(torch.allclose(xm_loss, expected, rtol=1e-5))
+        self.assertIsNotNone(condition.grad)
+
 
 if __name__ == '__main__':
     unittest.main()
