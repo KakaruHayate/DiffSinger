@@ -41,10 +41,51 @@ class RectifiedFlowLoss(nn.Module):
 
     def forward(self, v_pred: Tensor, v_gt: Tensor, t: Tensor, non_padding: Tensor = None) -> Tensor:
         """
-        :param v_pred: [B, 1, M, T]
-        :param v_gt: [B, 1, M, T]
+        :param v_pred: [B, F, R, T]
+        :param v_gt: [B, F, R, T]
         :param t: [B, 1] or [B, T]
         :param non_padding: [B, T, M]
         """
         v_pred, v_gt = self._mask_non_padding(v_pred, v_gt, non_padding)
         return self._forward(v_pred, v_gt, t=t).mean()
+
+    def forward_best_bin(
+            self, v_pred: Tensor, v_gt: Tensor, t: Tensor,
+            non_padding: Tensor = None, k: int = 1,
+    ) -> Tensor:
+        """Best-of-k over the repeat-bin dimension with zero extra compute.
+
+        RepetitiveRectifiedFlow already assigns each bin an independent noise,
+        so the R bins are R natural Forward XM candidates. This selects the
+        k lowest-loss bins per (batch, feature), averages over them, and
+        backpropagates only through those k bins.
+        """
+        v_pred, v_gt = self._mask_non_padding(v_pred, v_gt, non_padding)
+        loss = self._forward(v_pred, v_gt, t=t)  # [B, F, R, T]
+
+        per_bin = loss.sum(dim=-1)  # [B, F, R]
+        if non_padding is not None:
+            mask = non_padding.transpose(1, 2).unsqueeze(1).to(loss)
+            mask_sum = mask.sum(dim=-1)  # [B, 1, 1]
+            mask_sum = mask_sum.expand_as(per_bin).clamp_min(1.)
+            per_bin = per_bin / mask_sum
+
+        num_bins = per_bin.shape[-1]
+        k = min(k, num_bins)
+        if k >= num_bins:
+            return loss.mean()
+
+        # Select the k best bins per (batch, feature)
+        topk_values, topk_indices = per_bin.topk(k, dim=-1, largest=False)  # [B, F, k]
+
+        # Gather the winning predictions and targets
+        gather_indices = topk_indices.unsqueeze(-1).expand(-1, -1, -1, v_gt.shape[-1])
+        best_pred = v_pred.gather(2, gather_indices)  # [B, F, k, T]
+        best_gt = v_gt.gather(2, gather_indices)  # [B, F, k, T]
+
+        best_loss = self.loss(best_pred, best_gt)  # [B, F, k, T]
+        if self.log_norm:
+            best_loss = self.get_weights(t).squeeze(2).unsqueeze(2) * best_loss
+        if non_padding is not None:
+            best_loss = best_loss * non_padding.transpose(1, 2).unsqueeze(2)
+        return best_loss.mean()
