@@ -41,10 +41,42 @@ class RectifiedFlowLoss(nn.Module):
 
     def forward(self, v_pred: Tensor, v_gt: Tensor, t: Tensor, non_padding: Tensor = None) -> Tensor:
         """
-        :param v_pred: [B, 1, M, T]
-        :param v_gt: [B, 1, M, T]
+        :param v_pred: [B, F, R, T]
+        :param v_gt: [B, F, R, T]
         :param t: [B, 1] or [B, T]
         :param non_padding: [B, T, M]
         """
         v_pred, v_gt = self._mask_non_padding(v_pred, v_gt, non_padding)
         return self._forward(v_pred, v_gt, t=t).mean()
+
+    def forward_best_bin(
+            self, v_pred: Tensor, v_gt: Tensor, t: Tensor,
+            non_padding: Tensor = None,
+    ) -> Tensor:
+        """Best-of-R over the repeat-bin dimension with zero extra compute.
+
+        RepetitiveRectifiedFlow already assigns each bin an independent noise,
+        so the R bins are R natural Forward XM candidates. This selects the
+        winning bin per (batch, feature) and backpropagates only through it.
+        """
+        v_pred, v_gt = self._mask_non_padding(v_pred, v_gt, non_padding)
+        loss = self._forward(v_pred, v_gt, t=t)  # [B, F, R, T]
+
+        per_bin = loss.sum(dim=-1)  # [B, F, R]
+        if non_padding is not None:
+            mask = non_padding.transpose(1, 2).unsqueeze(1).to(loss)
+            mask_sum = mask.sum(dim=-1)  # [B, 1, 1]
+            mask_sum = mask_sum.expand_as(per_bin).clamp_min(1.)
+            per_bin = per_bin / mask_sum
+
+        best_indices = per_bin.argmin(dim=-1, keepdim=True)  # [B, F, 1]
+        best_indices = best_indices.unsqueeze(-1).expand(-1, -1, -1, v_gt.shape[-1])
+        best_pred = v_pred.gather(2, best_indices).squeeze(2)
+        best_gt = v_gt.gather(2, best_indices).squeeze(2)
+
+        best_loss = self.loss(best_pred, best_gt)
+        if self.log_norm:
+            best_loss = self.get_weights(t) * best_loss
+        if non_padding is not None:
+            best_loss = best_loss * non_padding.transpose(1, 2).unsqueeze(1)
+        return best_loss.mean()
