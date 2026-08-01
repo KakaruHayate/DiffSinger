@@ -113,13 +113,6 @@ class VarianceTask(BaseTask):
             self.variance_prediction_list.append('tension')
         self.predict_variances = len(self.variance_prediction_list) > 0
         self.lambda_var_loss = hparams['lambda_var_loss']
-        self.xm_pitch_best_of_k = int(hparams.get('xm_pitch_best_of_k', 1))
-        self.xm_variance_best_of_k = int(hparams.get('xm_variance_best_of_k', 1))
-        if min(self.xm_pitch_best_of_k, self.xm_variance_best_of_k) < 1:
-            raise ValueError('XM best-of-K values must be at least 1.')
-        if (self.xm_pitch_best_of_k > 1 or self.xm_variance_best_of_k > 1) \
-                and self.diffusion_type != 'reflow':
-            raise ValueError('Explorative Modeling currently supports Rectified Flow only.')
         super()._finish_init()
 
         # ── Fuse LYNXNet2 backbone kernels (in-place) ──
@@ -316,14 +309,9 @@ class VarianceTask(BaseTask):
                     )
                 elif self.diffusion_type == 'reflow':
                     pitch_v_pred, pitch_v_gt, t = pitch_pred
-                    if self.xm_pitch_best_of_k > 1:
-                        pitch_loss = self.pitch_loss.forward_best_bin(
-                            pitch_v_pred, pitch_v_gt, t=t, non_padding=non_padding
-                        )
-                    else:
-                        pitch_loss = self.pitch_loss(
-                            pitch_v_pred, pitch_v_gt, t=t, non_padding=non_padding
-                        )
+                    pitch_loss = self.pitch_loss(
+                        pitch_v_pred, pitch_v_gt, t=t, non_padding=non_padding
+                    )
                 else:
                     raise ValueError(f"Unknown diffusion type: {self.diffusion_type}")
                 losses['pitch_loss'] = self.lambda_pitch_loss * pitch_loss
@@ -335,14 +323,9 @@ class VarianceTask(BaseTask):
                     )
                 elif self.diffusion_type == 'reflow':
                     var_v_pred, var_v_gt, t = variances_pred
-                    if self.xm_variance_best_of_k > 1:
-                        var_loss = self.var_loss.forward_best_bin(
-                            var_v_pred, var_v_gt, t=t, non_padding=non_padding
-                        )
-                    else:
-                        var_loss = self.var_loss(
-                            var_v_pred, var_v_gt, t=t, non_padding=non_padding
-                        )
+                    var_loss = self.var_loss(
+                        var_v_pred, var_v_gt, t=t, non_padding=non_padding
+                    )
                 else:
                     raise ValueError(f"Unknown diffusion type: {self.diffusion_type}")
                 losses['var_loss'] = self.lambda_var_loss * var_loss
