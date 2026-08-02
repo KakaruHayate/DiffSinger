@@ -11,7 +11,6 @@ from modules.commons.common_layers import (
     SoftSignGLU,
     SwiGLU,
     Transpose,
-    interpolate_dual_timestep_embedding,
 )
 from utils.hparams import hparams
 
@@ -110,13 +109,14 @@ class LYNXNet2(nn.Module):
         else:
             x = x + self.conditioner_projection(cond.transpose(1, 2))
 
-        step = interpolate_dual_timestep_embedding(
-            self.diffusion_embedding,
-            diffusion_step,
-            diffusion_step_2,
-            mask,
-        )
-        x = x + step
+        if mask is not None:
+            step = torch.cat((diffusion_step, diffusion_step_2), dim=0)
+            step = self.diffusion_embedding(step)
+            step, step_2 = torch.split(step, x.shape[0], dim=0) #[B, 1, C]
+            mask = mask.to(x).unsqueeze(-1) # [B, T, 1]
+            x = x + step + (step_2 - step) * mask
+        else:
+            x = x + self.diffusion_embedding(diffusion_step)
 
         for layer in self.residual_layers:
             x = layer(x)
