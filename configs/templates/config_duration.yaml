@@ -79,6 +79,20 @@ lambda_sdp_loss: 0.005
 lambda_sdp_reg_loss: 0.1
 sdp_reg_warmup_steps: 16000
 
+# MDN (Mixture Density Network) duration predictor
+# use_mdn: true replaces the single-Gaussian regression head with a GMM
+# of `num_gaussians` components trained by negative log-likelihood (NLL).
+# At inference the most probable component's mean is chosen deterministically,
+# so the ONNX interface {encoder_out, x_masks, ph_midi} -> {ph_dur_pred} is preserved.
+use_mdn: false
+mdn_args:
+  num_gaussians: 8
+  log_p_min: -7.0
+  log_sigma_min: -7.0
+  log_scale_max: 3.0
+  log_scale_min: -1.0
+  sigma_floor: 0.000001
+
 dur_prediction_args:
   arch: resnet
   hidden_size: 256

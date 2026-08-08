@@ -9,6 +9,7 @@ import utils.infer_utils
 from basics.base_dataset import BaseDataset
 from basics.base_task import BaseTask
 from modules.losses import DurationLoss, DiffusionLoss, RectifiedFlowLoss
+from modules.mdn.mdn import mdn_nll_loss
 from modules.metrics import (
     RawCurveAccuracy, RawCurveR2Score, RhythmCorrectness, PhonemeDurationAccuracy
 )
@@ -291,7 +292,29 @@ class VarianceTask(BaseTask):
         else:
             losses = {}
             if dur_pred is not None:
-                losses['dur_loss'] = self.lambda_dur_loss * self.dur_loss(dur_pred, ph_dur, ph2word=ph2word)
+                if hparams.get('use_mdn', False):
+                    # MDN is trained by NLL on the log-domain target. dur_pred is
+                    # only used as a point-estimate for evaluation (RhythmCorrectness).
+                    dp_module = self.model.fs2.dur_predictor
+                    log_dur_gt = torch.log(ph_dur.float() + hparams['dur_prediction_args']['log_offset'])
+                    # ph2word == 0 marks the leading padding token
+                    if ph2word is not None:
+                        non_pad = (ph2word != 0).float()
+                    else:
+                        non_pad = None
+                    nll = mdn_nll_loss(
+                        dp_module._mdn_logit_p,
+                        dp_module._mdn_log_sigma,
+                        dp_module._mdn_mu,
+                        log_dur_gt,
+                    )
+                    if non_pad is not None:
+                        nll = nll * non_pad
+                        losses['dur_loss'] = self.lambda_dur_loss * nll.sum() / (non_pad.sum() + 1e-8)
+                    else:
+                        losses['dur_loss'] = self.lambda_dur_loss * nll.mean()
+                else:
+                    losses['dur_loss'] = self.lambda_dur_loss * self.dur_loss(dur_pred, ph_dur, ph2word=ph2word)
                 if hparams.get('use_sdp', False):
                     losses['sdp_flow_loss'] = self.sdp_flow_loss(sdp_loss) * self.lambda_sdp_loss
                     lambda_sdp_reg_base = hparams.get('lambda_sdp_reg_loss', 0.1)
