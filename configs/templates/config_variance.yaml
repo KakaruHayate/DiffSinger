@@ -84,6 +84,16 @@ dur_prediction_args:
   lambda_wdur_loss: 1.0
   lambda_sdur_loss: 3.0
 
+# MDN (Mixture Density Network) duration prediction
+use_mdn: false
+mdn_args:
+  num_gaussians: 8
+  log_p_min: -7.0
+  log_sigma_min: -7.0
+  log_scale_max: 6.0
+  log_scale_min: -1.0
+  sigma_floor: 0.000001
+
 use_melody_encoder: true
 melody_encoder_args:
   hidden_size: 128

@@ -291,7 +291,15 @@ class VarianceTask(BaseTask):
         else:
             losses = {}
             if dur_pred is not None:
-                losses['dur_loss'] = self.lambda_dur_loss * self.dur_loss(dur_pred, ph_dur, ph2word=ph2word)
+                if hparams.get('use_mdn', False):
+                    # DurationPredictor computes the masked per-phoneme NLL on
+                    # the log-domain target and returns it in the `sdp_loss`
+                    # slot (use_mdn and use_sdp are mutually exclusive).
+                    # The token padding mask (txt_tokens == PAD_INDEX) is
+                    # applied inside the predictor, so no ph2word mask here.
+                    losses['dur_loss'] = self.lambda_dur_loss * sdp_loss
+                else:
+                    losses['dur_loss'] = self.lambda_dur_loss * self.dur_loss(dur_pred, ph_dur, ph2word=ph2word)
                 if hparams.get('use_sdp', False):
                     losses['sdp_flow_loss'] = self.sdp_flow_loss(sdp_loss) * self.lambda_sdp_loss
                     lambda_sdp_reg_base = hparams.get('lambda_sdp_reg_loss', 0.1)
