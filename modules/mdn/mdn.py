@@ -51,7 +51,7 @@ class MDNLayer(nn.Module):
     x: (B, T, F)  ->  (log_pi, log_sigma, mu) each of shape (B, T, G).
     """
 
-    def __init__(self, in_features, num_gaussians=8,
+    def __init__(self, in_features, num_gaussians=4,
                  log_p_min=-7.0, log_sigma_min=-7.0, sigma_floor=1e-6,
                  log_scale_max=6.0, log_scale_min=-1.0):
         super().__init__()
@@ -113,8 +113,12 @@ class MDNLayer(nn.Module):
         lp = self.log_pi(logit_p)                  # [B, T, G]
         s = self.sigma(log_sigma)                  # [B, T, G]
         t = target.unsqueeze(-1)                   # [B, T, 1]
+        # Clamp centered residuals to +/-5 sigma for numerical stability
+        # (same convention as NNSVS mdn_loss). Prevents extreme targets from
+        # producing exploding gradients or NaN in the quadratic term.
+        centered = torch.clamp(t - mu, min=-5.0 * s, max=5.0 * s)
         log_n = (-0.5 * (torch.log(s * s) + _LOG_2PI)
-                 - (t - mu) ** 2 / (2 * s * s))    # [B, T, G]
+                 - centered ** 2 / (2 * s * s))    # [B, T, G]
         return logsumexp(log_n + lp, dim=-1, keepdim=False)  # [B, T]
 
     def point_estimate(self, logit_p, log_sigma, mu):

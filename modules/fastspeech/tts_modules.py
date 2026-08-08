@@ -132,11 +132,11 @@ class DurationPredictor(torch.nn.Module):
         if self.use_mdn:
             self.mdn = MDNLayer(
                 in_features=n_chans,
-                num_gaussians=self.mdn_args.get('num_gaussians', 8),
+                num_gaussians=self.mdn_args.get('num_gaussians', 4),
                 log_p_min=float(self.mdn_args.get('log_p_min', -7.0)),
                 log_sigma_min=float(self.mdn_args.get('log_sigma_min', -7.0)),
                 sigma_floor=float(self.mdn_args.get('sigma_floor', 1e-6)),
-                log_scale_max=float(self.mdn_args.get('log_scale_max', 3.0)),
+                log_scale_max=float(self.mdn_args.get('log_scale_max', 6.0)),
                 log_scale_min=float(self.mdn_args.get('log_scale_min', -1.0)),
             )
             self.linear = None

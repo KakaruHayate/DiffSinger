@@ -87,7 +87,7 @@ dur_prediction_args:
 # MDN (Mixture Density Network) duration prediction
 use_mdn: false
 mdn_args:
-  num_gaussians: 8
+  num_gaussians: 4
   log_p_min: -7.0
   log_sigma_min: -7.0
   log_scale_max: 6.0
