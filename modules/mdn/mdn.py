@@ -22,6 +22,13 @@ _LOG_2PI = math.log(2.0 * math.pi)
 
 
 def logsumexp(x, dim=-1, keepdim=True):
+    """Numerically stable log-sum-exp over `dim`.
+
+    :param x: input tensor.
+    :param dim: reduction dimension.
+    :param keepdim: whether to keep the reduced dimension.
+    :return: log(sum(exp(x), dim)) with the same keepdim semantics.
+    """
     m, _ = x.max(dim=dim, keepdim=True)
     m = torch.clamp(m, min=-1e30)
     out = m + torch.log(torch.exp(x - m).sum(dim=dim, keepdim=True))
@@ -29,6 +36,12 @@ def logsumexp(x, dim=-1, keepdim=True):
 
 
 def log_softmax(x, dim=-1):
+    """Log-softmax via logsumexp subtraction.
+
+    :param x: input logits.
+    :param dim: class dimension.
+    :return: log-softmax values with the same shape as x.
+    """
     return x - logsumexp(x, dim=dim, keepdim=True)
 
 
@@ -64,6 +77,13 @@ class MDNLayer(nn.Module):
             b[2 * n:] = torch.linspace(-0.5, 0.5, n)  # mu spread
 
     def forward(self, x):
+        """Map input features to bounded GMM parameters.
+
+        :param x: [B, T, F] backbone features.
+        :return: tuple (logit_p, log_sigma, mu), each [B, T, G], with
+            logit_p clamped at log_p_min and mu clamped to [log_scale_min,
+            log_scale_max] so the linear-domain duration cannot diverge.
+        """
         z = self.act(self.hidden(x))
         logit_p, log_sigma, mu = self.out(z).chunk(3, dim=-1)
         logit_p = torch.clamp(logit_p, min=self.log_p_min)
@@ -72,9 +92,19 @@ class MDNLayer(nn.Module):
 
     # -- distribution utils --------------------------------------------------
     def log_pi(self, logit_p):
+        """Log mixture weights from component logits.
+
+        :param logit_p: [B, T, G] component logits.
+        :return: log-softmax weights [B, T, G].
+        """
         return log_softmax(logit_p, dim=-1)
 
     def sigma(self, log_sigma):
+        """Standard deviation with configured lower clamp and floor.
+
+        :param log_sigma: [B, T, G] log-std values.
+        :return: positive sigma [B, T, G].
+        """
         ls = torch.clamp(log_sigma, min=self.log_sigma_min)
         return torch.exp(ls) + self.sigma_floor
 
