@@ -7,7 +7,7 @@ from modules.commons.rotary_embedding_torch import RotaryEmbedding
 from modules.commons.common_layers import SinusoidalPositionalEmbedding, EncSALayer, AdamWLinear
 from modules.commons.espnet_positional_embedding import RelPositionalEncoding
 from modules.sdp.sdp import StochasticDurationPredictor
-from modules.mdn.mdn import MDNLayer
+from modules.mdn.mdn import MDNLayer, mdn_nll_loss
 
 DEFAULT_MAX_SOURCE_POSITIONS = 2000
 DEFAULT_MAX_TARGET_POSITIONS = 2000
@@ -202,24 +202,29 @@ class DurationPredictor(torch.nn.Module):
 
         dp_feat = dp_xs.transpose(1, -1)             # [B, idim, Tmax] -> [B, Tmax, n_chans]
 
+        loss_sdp = 0.0
+        sdp_pred = None
+
         # ---- output head --------------------------------------------------
         if self.use_mdn:
-            # record raw log-domain mixture params; also give a linear-domain
-            # deterministic point estimate for downstream (mel2ph) building.
-            self._mdn_logit_p, self._mdn_log_sigma, self._mdn_mu = \
-                self.mdn(dp_feat)
-            log_mu_map = self.mdn.point_estimate(
-                self._mdn_logit_p, self._mdn_log_sigma, self._mdn_mu
-            )
+            # raw log-domain mixture params; the point estimate (mean of the
+            # most probable component) is the deterministic linear-domain
+            # prediction used for downstream mel2ph building.
+            logit_p, log_sigma, mu = self.mdn(dp_feat)
+            log_mu_map = self.mdn.point_estimate(logit_p, log_sigma, mu)
             dur_pred = log_mu_map.exp() - self.offset  # linear domain [B, Tmax]
             dur_pred = dur_pred * non_pad_mask_2d.squeeze(-1)
+            # MDN is trained by NLL on the log-domain target. Reuse the
+            # `loss_sdp` slot (mutually exclusive with use_sdp) to carry the
+            # masked per-phoneme NLL back to the training task.
+            if not infer and ph_dur is not None:
+                log_dur_gt = torch.log(ph_dur.float() + self.offset)
+                nll = mdn_nll_loss(self.mdn, logit_p, log_sigma, mu, log_dur_gt, masks=x_masks)
+                loss_sdp = nll.sum() / (non_pad_mask.sum() + 1e-8)
         else:
             dp_xs = self.linear(dp_feat)             # [B, Tmax, C]
             dp_xs = dp_xs * non_pad_mask_2d          # Mask padded areas [B, Tmax, C]
             dur_pred = self.out2dur(dp_xs)           # Convert to linear domain [B, Tmax]
-
-        loss_sdp = 0.0
-        sdp_pred = None
 
         if self.use_sdp and sdp_cond is not None:
             sdp_cond_t = sdp_cond.transpose(1, -1)   # [B, idim, Tmax]

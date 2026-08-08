@@ -40,7 +40,7 @@ class MDNLayer(nn.Module):
 
     def __init__(self, in_features, num_gaussians=8,
                  log_p_min=-7.0, log_sigma_min=-7.0, sigma_floor=1e-6,
-                 log_scale_max=3.0, log_scale_min=-1.0):
+                 log_scale_max=6.0, log_scale_min=-1.0):
         super().__init__()
         self.in_features = in_features
         self.num_gaussians = num_gaussians
@@ -85,7 +85,7 @@ class MDNLayer(nn.Module):
         t = target.unsqueeze(-1)                   # [B, T, 1]
         log_n = (-0.5 * (torch.log(s * s) + _LOG_2PI)
                  - (t - mu) ** 2 / (2 * s * s))    # [B, T, G]
-        return logsumexp(log_n + lp, dim=-1)       # [B, T]
+        return logsumexp(log_n + lp, dim=-1, keepdim=False)  # [B, T]
 
     def point_estimate(self, logit_p, log_sigma, mu):
         """Deterministic point: mean of most-probable component. [B, T]."""
@@ -95,14 +95,16 @@ class MDNLayer(nn.Module):
         return m
 
 
-def mdn_nll_loss(logit_p, log_sigma, mu, target, masks=None):
-    """Per-phoneme NLL (log domain). target: [B, T]; returns [B, T]."""
-    tgt = target.unsqueeze(-1)                     # [B, T, 1]
-    lp = log_softmax(logit_p)                      # [B, T, G]
-    s = torch.clamp(log_sigma, min=-7.0).exp() + 1e-6
-    log_n = (-0.5 * (torch.log(s * s) + _LOG_2PI)
-             - (tgt - mu) ** 2 / (2 * s * s))
-    nll = -(logsumexp(log_n + lp, dim=-1, keepdim=False))  # [B, T]
+def mdn_nll_loss(mdn_layer, logit_p, log_sigma, mu, target, masks=None):
+    """Per-phoneme NLL (log domain), delegating density math to the layer.
+
+    :param mdn_layer: MDNLayer instance (its configured clamps are used).
+    :param logit_p, log_sigma, mu: mixture parameters from MDNLayer.forward.
+    :param target: log-domain durations [B, T].
+    :param masks: [B, T] bool tensor where True marks padding (excluded from loss).
+    :return: per-phoneme NLL [B, T].
+    """
+    nll = -mdn_layer.log_prob(logit_p, log_sigma, mu, target)  # [B, T]
     if masks is not None:
-        nll = nll * (1.0 - masks.float())
+        nll = nll * (~masks).float()
     return nll

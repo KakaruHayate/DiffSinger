@@ -70,7 +70,7 @@ mdn_args:
   num_gaussians: 8
   log_p_min: -7.0
   log_sigma_min: -7.0
-  log_scale_max: 3.0
+  log_scale_max: 6.0
   log_scale_min: -1.0
   sigma_floor: 0.000001
 
