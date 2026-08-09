@@ -212,23 +212,16 @@ class BaseTask(pl.LightningModule):
         total_loss = sum(losses.values())
         return total_loss, {**losses, 'batch_size': float(sample['size'])}
 
-    def _current_lr(self):
-        """Current LR, safe when no scheduler is configured."""
-        try:
-            return self.lr_schedulers().get_last_lr()[0]
-        except (AttributeError, IndexError):
-            return self.optimizers().param_groups[0]['lr']
-
     def training_step(self, sample, batch_idx):
         total_loss, log_outputs = self._training_step(sample)
 
         # logs to progress bar
         self.log_dict(log_outputs, prog_bar=True, logger=False, on_step=True, on_epoch=False)
-        self.log('lr', self._current_lr(), prog_bar=True, logger=False, on_step=True, on_epoch=False)
+        self.log('lr', self.lr_schedulers().get_last_lr()[0], prog_bar=True, logger=False, on_step=True, on_epoch=False)
         # logs to tensorboard
         if self.global_step % hparams['log_interval'] == 0:
             tb_log = {f'training/{k}': v for k, v in log_outputs.items()}
-            tb_log['training/lr'] = self._current_lr()
+            tb_log['training/lr'] = self.lr_schedulers().get_last_lr()[0]
             self.logger.log_metrics(tb_log, step=self.global_step)
 
         return total_loss
@@ -239,32 +232,10 @@ class BaseTask(pl.LightningModule):
     def _on_validation_start(self):
         pass
 
-    def _switch_optimizer_mode(self, mode: str):
-        """Schedule-free optimizers (AdamWScheduleFree & co.) require explicit
-        .train()/.eval() to swap between the training (y) and averaged (x)
-        parameter sequences; must be toggled in sync with model.train()/eval().
-        No-op for regular optimizers lacking these methods.
-        """
-        opt = self.optimizers()
-        if not isinstance(opt, (list, tuple)):
-            opt = [opt]
-        for o in opt:
-            fn = getattr(o, mode, None)
-            if fn is not None:
-                fn()
-
-    def on_train_start(self):
-        self._switch_optimizer_mode('train')
-
-    def on_validation_end(self):
-        # validation/eval phase is over: swap back to the training sequence
-        self._switch_optimizer_mode('train')
-
     def on_validation_start(self):
         if self.skip_immediate_validation:
             rank_zero_debug("Skip validation")
             return
-        self._switch_optimizer_mode('eval')
         self._on_validation_start()
         for metric in self.valid_losses.values():
             metric.to(self.device)
@@ -321,11 +292,7 @@ class BaseTask(pl.LightningModule):
         from utils import build_lr_scheduler_from_config
 
         scheduler_args = hparams['lr_scheduler_args']
-        if not scheduler_args['scheduler_cls']:
-            # No scheduler: schedule-free optimizers (e.g. AdamWScheduleFree)
-            # train with a constant LR and must not be decayed. Lightning
-            # accepts a bare optimizer in configure_optimizers.
-            return None
+        assert scheduler_args['scheduler_cls'] != ''
         scheduler = build_lr_scheduler_from_config(optimizer, scheduler_args)
         return scheduler
 
