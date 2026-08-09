@@ -1,6 +1,7 @@
 import matplotlib
 import torch
 import torch.distributions
+import torch.nn.functional as F
 import torch.optim
 import torch.utils.data
 
@@ -93,6 +94,9 @@ class VarianceTask(BaseTask):
         self.predict_dur = hparams['predict_dur']
         if self.predict_dur:
             self.lambda_dur_loss = hparams['lambda_dur_loss']
+            # Note-level duration conservation weight (used when pitch and
+            # duration are trained together on the shared linguistic encoder).
+            self.lambda_note_dur_loss = hparams.get('lambda_note_dur_loss', 0.3)
 
         self.predict_pitch = hparams['predict_pitch']
         if self.predict_pitch:
@@ -298,6 +302,29 @@ class VarianceTask(BaseTask):
                     # The token padding mask (txt_tokens == PAD_INDEX) is
                     # applied inside the predictor, so no ph2word mask here.
                     losses['dur_loss'] = self.lambda_dur_loss * sdp_loss
+                    # Note-level duration conservation. When pitch and duration
+                    # are trained together (shared linguistic encoder), the
+                    # encoder already conditions on note durations
+                    # (word_dur_embed); this term makes the duration branch
+                    # explicitly learn the note-internal allocation ratio by
+                    # constraining the sum of predicted phoneme durations
+                    # within each note to match the note duration (SV/NNSVS
+                    # style). Auto-enabled for the joint pitch+duration setup.
+                    if self.predict_pitch and self.predict_dur and ph2word is not None \
+                            and self.lambda_note_dur_loss > 0:
+                        n_words = ph2word.max() + 1
+                        w_gt = ph_dur.new_zeros(ph2word.shape[0], n_words).scatter_add(
+                            1, ph2word, ph_dur.float())[:, 1:]   # drop padding slot
+                        w_pred = ph_dur.new_zeros(ph2word.shape[0], n_words).scatter_add(
+                            1, ph2word, dur_pred.float())[:, 1:]
+                        note_mask = w_gt > 0
+                        if note_mask.any():
+                            note_loss = F.mse_loss(
+                                torch.log(w_pred[note_mask] + 1.0),
+                                torch.log(w_gt[note_mask] + 1.0),
+                                reduction='mean'
+                            )
+                            losses['dur_note_loss'] = self.lambda_note_dur_loss * note_loss
                 else:
                     losses['dur_loss'] = self.lambda_dur_loss * self.dur_loss(dur_pred, ph_dur, ph2word=ph2word)
                 if hparams.get('use_sdp', False):

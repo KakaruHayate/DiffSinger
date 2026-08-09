@@ -132,6 +132,10 @@ variances_prediction_args:
     glu_type: 'atanglu'
 
 lambda_dur_loss: 1.0
+# Note-level duration conservation (MDN, joint pitch+duration training):
+# constrains the sum of predicted phoneme durations within each note to
+# match the note duration, teaching the note-internal allocation ratio.
+lambda_note_dur_loss: 0.3
 lambda_pitch_loss: 1.0
 lambda_var_loss: 1.0
 
