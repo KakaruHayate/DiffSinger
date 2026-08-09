@@ -202,6 +202,12 @@ class VarianceTask(BaseTask):
             self.register_validation_loss('dur_loss')
             self.register_validation_metric('rhythm_corr', RhythmCorrectness(tolerance=0.05))
             self.register_validation_metric('ph_dur_acc', PhonemeDurationAccuracy(tolerance=0.2))
+            # Note-level conservation loss (MDN, joint pitch+duration training).
+            # Must be registered iff run_model can emit it, else validation
+            # raises KeyError when iterating the returned losses.
+            if hparams.get('use_mdn', False) and self.predict_pitch \
+                    and self.lambda_note_dur_loss > 0:
+                self.register_validation_loss('dur_note_loss')
             if hparams.get('use_sdp', False):
                 self.dur_sdp_loss = DurationLoss(
                     offset=dur_hparams['log_offset'],
