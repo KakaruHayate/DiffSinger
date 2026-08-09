@@ -313,10 +313,16 @@ class VarianceTask(BaseTask):
                     if self.predict_pitch and self.predict_dur and ph2word is not None \
                             and self.lambda_note_dur_loss > 0:
                         n_words = ph2word.max() + 1
-                        w_gt = ph_dur.new_zeros(ph2word.shape[0], n_words).scatter_add(
-                            1, ph2word, ph_dur.float())[:, 1:]   # drop padding slot
-                        w_pred = ph_dur.new_zeros(ph2word.shape[0], n_words).scatter_add(
-                            1, ph2word, dur_pred.float())[:, 1:]
+                        # ph_dur may be int64 (frame counts); scatter_add requires
+                        # self.dtype == src.dtype, so allocate float32 explicitly.
+                        w_gt = torch.zeros(
+                            ph2word.shape[0], n_words, dtype=torch.float32,
+                            device=ph_dur.device
+                        ).scatter_add(1, ph2word, ph_dur.float())[:, 1:]   # drop padding slot
+                        w_pred = torch.zeros(
+                            ph2word.shape[0], n_words, dtype=torch.float32,
+                            device=ph_dur.device
+                        ).scatter_add(1, ph2word, dur_pred.float())[:, 1:]
                         note_mask = w_gt > 0
                         if note_mask.any():
                             note_loss = F.mse_loss(
