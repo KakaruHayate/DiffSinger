@@ -61,13 +61,19 @@ def wrap_lynxnet2_block(block, glu_type='softsign_glu'):
 
     is_double = glu_type == 'double_softsign_glu'
 
-    def fused_forward(self, x):
+    def fused_forward(self, x, mask=None):
         residual = x
 
         # Original: LayerNorm → Transpose → Conv1d → Transpose
+        # Frame-separated variant (LYNXNet2Sep): the depthwise conv cuts
+        # cross-group frame interactions when a dual-timestep mask is given.
         x = self.net[0](x)  # LayerNorm
         x = self.net[1](x)  # Transpose
-        x = self.net[2](x)  # Conv1d(depthwise)
+        if getattr(self, 'separate_frames', False) and mask is not None:
+            from modules.backbones.lynxnet2_sep import separated_depthwise_conv
+            x = separated_depthwise_conv(x, self.net[2], mask)
+        else:
+            x = self.net[2](x)  # Conv1d(depthwise)
         x = self.net[3](x)  # Transpose
 
         if self.training:
@@ -95,16 +101,17 @@ def wrap_lynxnet2_block(block, glu_type='softsign_glu'):
 
 
 def patch_lynxnet2_model(model, glu_type='softsign_glu'):
-    """Patch all LYNXNet2Blocks in a LYNXNet2 model.
+    """Patch all LYNXNet2 / LYNXNet2Sep blocks in a backbone model.
 
     Args:
-        model: LYNXNet2 instance
+        model: LYNXNet2 or LYNXNet2Sep instance
         glu_type: GLU type configured for the model (only softsign_glu fuses)
 
     Returns:
         Number of blocks patched (0 if glu_type unsupported).
     """
     from modules.backbones.lynxnet2 import LYNXNet2Block
+    from modules.backbones.lynxnet2_sep import LYNXNet2SepBlock
     if glu_type not in _FUSABLE_GLU_TYPES:
         import warnings
         warnings.warn(
@@ -119,7 +126,7 @@ def patch_lynxnet2_model(model, glu_type='softsign_glu'):
         )
     patched = 0
     for i, layer in enumerate(model.residual_layers):
-        if isinstance(layer, LYNXNet2Block):
+        if isinstance(layer, (LYNXNet2Block, LYNXNet2SepBlock)):
             model.residual_layers[i] = wrap_lynxnet2_block(layer, glu_type=glu_type)
             patched += 1
     return patched
@@ -131,17 +138,18 @@ def patch_lynxnet2_model(model, glu_type='softsign_glu'):
 # ---------------------------------------------------------------------------
 
 def _patch_backbone_fn(backbone_fn, glu_type):
-    """Patch a single backbone function/module if it's a LYNXNet2.
+    """Patch a single backbone function/module if it's a LYNXNet2 / LYNXNet2Sep.
 
     Args:
         backbone_fn: The backbone module (e.g., diffusion.denoise_fn)
         glu_type: GLU type (only softsign_glu fuses)
 
     Returns:
-        Number of blocks patched (0 if not a LYNXNet2).
+        Number of blocks patched (0 if not a LYNXNet2 / LYNXNet2Sep).
     """
     from modules.backbones.lynxnet2 import LYNXNet2
-    if not isinstance(backbone_fn, LYNXNet2):
+    from modules.backbones.lynxnet2_sep import LYNXNet2Sep
+    if not isinstance(backbone_fn, (LYNXNet2, LYNXNet2Sep)):
         return 0
     return patch_lynxnet2_model(backbone_fn, glu_type=glu_type)
 
