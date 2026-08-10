@@ -1,12 +1,23 @@
 """
-Drop-in replacement for LYNXNet2Block with fused Linear+SoftSignGLU kernels.
+Drop-in replacement for LYNXNet2 / LYNXNet2Sep blocks with fused
+Linear+SoftSignGLU kernels.
 
 The fused kernel replaces:
   nn.Linear(dim, inner_dim*2) + SoftSignGLU  →  one fused kernel call
 (training mode only; eval mode uses the original nn.Sequential path).
 
-Only softsign_glu is supported — other GLU types are left unpatched
-(warning at patch time, block runs the original forward).
+'softsign_glu' and 'double_softsign_glu' are fused — other GLU types are
+left unpatched (warning at patch time, block runs the original forward).
+
+Pickle safety (Lightning checkpoints):
+  Blocks are fused by rebinding the instance class to a Mixin subclass
+  (FusedLYNXNet2Block / FusedLYNXNet2SepBlock) instead of monkey-patching
+  a bound method, so torch.save/load round-trips keep the fused forward.
+
+Frame separation (LYNXNet2Sep):
+  When the block has ``separate_frames`` enabled and a dual-timestep mask
+  is given, the depthwise conv cuts cross-group frame interactions before
+  the fused Linear+SoftSignGLU calls.
 
 Numerical accuracy:
   SoftSignGLU is exact in Triton (no approximation). Differences vs the
@@ -21,9 +32,14 @@ element-wise gradient into one kernel; all GEMMs stay on cuBLAS.
 ONNX export:
   Use `model.eval()` → falls back to original path → ONNX export works
 """
+import contextlib
+import warnings
+
 import torch
 import torch.nn as nn
 
+from modules.backbones.lynxnet2 import LYNXNet2Block
+from modules.backbones.lynxnet2_sep import LYNXNet2SepBlock
 from modules.kernels.fused_linear_softsign_glu import (
     fused_linear_softsign_glu,
     is_triton_available,
@@ -33,42 +49,22 @@ from modules.kernels.fused_linear_softsign_glu import (
 _FUSABLE_GLU_TYPES = ('softsign_glu', 'double_softsign_glu')
 
 
-def wrap_lynxnet2_block(block, glu_type='softsign_glu'):
-    """Wrap an existing LYNXNet2Block to use fused forward.
+class _FusedLYNXNet2BlockMixin:
+    """Pickle-safe fused forward mixed into an existing LYNXNet2(B)Block.
 
-    Keeps all weights in-place (state_dict compatible).
-    Only modifies the forward pass.
-
-    'softsign_glu' and 'double_softsign_glu' are fused. Other GLU types are
-    returned unpatched: the ATanGLU Triton kernel (fused_linear_glu.py)
-    predates the autotune M-bucketing / cuBLAS-backward fixes and is slower
-    than eager in real training shapes, and SwiGLU never had a fused kernel.
-
-    Args:
-        block: LYNXNet2Block instance
-        glu_type: GLU type configured for this block
-
-    Returns:
-        The same block, with patched forward if glu_type is supported.
+    Training: LayerNorm → Transpose → depthwise conv (frame-separated for
+    LYNXNet2Sep when a dual-timestep mask is given) → fused Linear+GLU ×2 →
+    output projection → dropout → +residual.
+    Eval: falls back to the original block forward (ONNX export safe).
     """
-    if glu_type not in _FUSABLE_GLU_TYPES:
-        import warnings
-        warnings.warn(
-            f"Fused kernels support only {_FUSABLE_GLU_TYPES}; leaving block "
-            f"with glu_type={glu_type!r} unpatched."
-        )
-        return block
 
-    is_double = glu_type == 'double_softsign_glu'
+    def forward(self, x, mask=None):
+        if not self.training:
+            return super().forward(x)
 
-    def fused_forward(self, x, mask=None):
         residual = x
-
-        # Original: LayerNorm → Transpose → Conv1d → Transpose
-        # Frame-separated variant (LYNXNet2Sep): the depthwise conv cuts
-        # cross-group frame interactions when a dual-timestep mask is given.
         x = self.net[0](x)  # LayerNorm
-        x = self.net[1](x)  # Transpose
+        x = self.net[1](x)  # Transpose -> [B, C, T]
         if getattr(self, 'separate_frames', False) and mask is not None:
             from modules.backbones.lynxnet2_sep import separated_depthwise_conv
             x = separated_depthwise_conv(x, self.net[2], mask)
@@ -76,27 +72,69 @@ def wrap_lynxnet2_block(block, glu_type='softsign_glu'):
             x = self.net[2](x)  # Conv1d(depthwise)
         x = self.net[3](x)  # Transpose
 
-        if self.training:
-            # Fused: Linear+GLU → Linear+GLU
-            x = fused_linear_softsign_glu(x, self.net[4].weight, self.net[4].bias, is_double)
-            x = fused_linear_softsign_glu(x, self.net[6].weight, self.net[6].bias, is_double)
-        else:
-            # Original: Linear → GLU → Linear → GLU
-            x = self.net[4](x)
-            x = self.net[5](x)  # (Double)SoftSignGLU
-            x = self.net[6](x)
-            x = self.net[7](x)
-
-        # Original: Linear → Dropout → +residual
+        is_double = getattr(self, '_fused_is_double', False)
+        x = fused_linear_softsign_glu(x, self.net[4].weight, self.net[4].bias, is_double)
+        x = fused_linear_softsign_glu(x, self.net[6].weight, self.net[6].bias, is_double)
         x = self.net[8](x)  # output projection
         x = self.net[9](x)  # Dropout
         return x + residual
 
-    # Monkey-patch — use descriptor protocol so the bound method captures
-    # ``self`` dynamically (avoids the deepcopy stale-closure issue: a
-    # deepcopy'ed block would otherwise keep a reference to the original's
-    # ``net``).
-    block.forward = fused_forward.__get__(block, type(block))
+
+class FusedLYNXNet2Block(_FusedLYNXNet2BlockMixin, LYNXNet2Block):
+    """LYNXNet2Block variant with a pickle-safe fused training forward."""
+
+
+class FusedLYNXNet2SepBlock(_FusedLYNXNet2BlockMixin, LYNXNet2SepBlock):
+    """LYNXNet2SepBlock variant with a pickle-safe fused training forward."""
+
+
+def wrap_lynxnet2_block(block, glu_type='softsign_glu'):
+    """Fuse an existing LYNXNet2Block / LYNXNet2SepBlock in place.
+
+    Keeps all weights in-place (state_dict compatible); only rebinds the
+    instance class, so the fused forward survives torch.save/load (Lightning
+    checkpoints).
+
+    'softsign_glu' and 'double_softsign_glu' are fused. Other GLU types are
+    returned unpatched: the ATanGLU Triton kernel (fused_linear_glu.py)
+    predates the autotune M-bucketing / cuBLAS-backward fixes and is slower
+    than eager in real training shapes, and SwiGLU never had a fused kernel.
+
+    Args:
+        block: LYNXNet2Block or LYNXNet2SepBlock instance
+        glu_type: GLU type configured for this block
+
+    Returns:
+        The same block, fused if glu_type is supported.
+    """
+    if glu_type not in _FUSABLE_GLU_TYPES:
+        warnings.warn(
+            f"Fused kernels support only {_FUSABLE_GLU_TYPES}; leaving block "
+            f"with glu_type={glu_type!r} unpatched.",
+            stacklevel=2,
+        )
+        return block
+
+    net = block.net
+    if not (
+        len(net) == 10
+        and isinstance(net[4], nn.Linear)
+        and isinstance(net[6], nn.Linear)
+        and isinstance(net[8], nn.Linear)
+        and net[4].out_features == 2 * net[6].in_features
+        and net[6].out_features == 2 * net[8].in_features
+    ):
+        warnings.warn(
+            'Unexpected LYNXNet2Block.net layout; leaving block unpatched.',
+            stacklevel=2,
+        )
+        return block
+
+    block._fused_is_double = (glu_type == 'double_softsign_glu')
+    if isinstance(block, LYNXNet2SepBlock):
+        block.__class__ = FusedLYNXNet2SepBlock
+    elif isinstance(block, LYNXNet2Block):
+        block.__class__ = FusedLYNXNet2Block
     return block
 
 
@@ -110,13 +148,11 @@ def patch_lynxnet2_model(model, glu_type='softsign_glu'):
     Returns:
         Number of blocks patched (0 if glu_type unsupported).
     """
-    from modules.backbones.lynxnet2 import LYNXNet2Block
-    from modules.backbones.lynxnet2_sep import LYNXNet2SepBlock
     if glu_type not in _FUSABLE_GLU_TYPES:
-        import warnings
         warnings.warn(
             f"Fused kernels require glu_type in {_FUSABLE_GLU_TYPES}; "
-            f"got {glu_type!r}. Skipping patch."
+            f"got {glu_type!r}. Skipping patch.",
+            stacklevel=2,
         )
         return 0
     if not is_triton_available():
@@ -127,8 +163,9 @@ def patch_lynxnet2_model(model, glu_type='softsign_glu'):
     patched = 0
     for i, layer in enumerate(model.residual_layers):
         if isinstance(layer, (LYNXNet2Block, LYNXNet2SepBlock)):
-            model.residual_layers[i] = wrap_lynxnet2_block(layer, glu_type=glu_type)
-            patched += 1
+            layer = wrap_lynxnet2_block(layer, glu_type=glu_type)
+            model.residual_layers[i] = layer
+            patched += isinstance(layer, (FusedLYNXNet2Block, FusedLYNXNet2SepBlock))
     return patched
 
 
@@ -230,7 +267,7 @@ def warmup_fused_backbone(backbone, max_frames=None, autocast_dtype=None):
     a real run will hit: from a small bucket up to next_power_of_2(max_frames).
 
     Args:
-        backbone: LYNXNet2 model (already patched).
+        backbone: LYNXNet2 / LYNXNet2Sep model (already patched).
         max_frames: max total frames per batch (hparams['max_batch_frames']).
             If None, warms a single small bucket only.
         autocast_dtype: torch.float16 for '16-mixed', torch.bfloat16 for
@@ -243,9 +280,7 @@ def warmup_fused_backbone(backbone, max_frames=None, autocast_dtype=None):
             'Install Triton for this platform or set use_fused_kernels=false.'
         )
 
-    import contextlib
     import triton
-    import warnings
 
     device = next(backbone.parameters()).device
     dtype = next(backbone.parameters()).dtype
