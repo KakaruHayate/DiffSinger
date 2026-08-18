@@ -15,7 +15,7 @@ DEFAULT_MAX_TARGET_POSITIONS = 2000
 
 class TransformerEncoderLayer(nn.Module):
     def __init__(self, hidden_size, dropout, kernel_size=None, act='gelu', num_heads=2, rotary_embed=None,
-                 layer_idx=None, mix_ln_layer=None, use_laurel_block=False):
+                 layer_idx=None, mix_ln_layer=None, use_laurel_block=False, mixln_shuffle_speakers=False):
         super().__init__()
         self.op = EncSALayer(
             hidden_size, num_heads, dropout=dropout,
@@ -23,7 +23,8 @@ class TransformerEncoderLayer(nn.Module):
             kernel_size=kernel_size,
             act=act, rotary_embed=rotary_embed,
             layer_idx=layer_idx, mix_ln_layer=mix_ln_layer,
-            use_laurel_block=use_laurel_block
+            use_laurel_block=use_laurel_block,
+            mixln_shuffle_speakers=mixln_shuffle_speakers
         )
 
     def forward(self, x, **kwargs):
@@ -491,7 +492,7 @@ class FastSpeech2Encoder(nn.Module):
             ffn_kernel_size=9, ffn_act='gelu',
             dropout=None, num_heads=2, use_pos_embed=True, rel_pos=True,
             use_rope=False, rope_interleaved=True, mix_ln_layer=None, rope_theta=10000,
-            use_laurel_block=False
+            use_laurel_block=False, mixln_shuffle_speakers=False
     ):
         super().__init__()
         self.num_layers = num_layers
@@ -514,7 +515,8 @@ class FastSpeech2Encoder(nn.Module):
                 self.hidden_size, self.dropout,
                 kernel_size=ffn_kernel_size, act=ffn_act,
                 num_heads=num_heads, rotary_embed=rotary_embed,
-                layer_idx=i, mix_ln_layer=mix_ln_layer, use_laurel_block=use_laurel_block
+                layer_idx=i, mix_ln_layer=mix_ln_layer, use_laurel_block=use_laurel_block,
+                mixln_shuffle_speakers=mixln_shuffle_speakers
             )
             for i in range(self.num_layers)
         ])
