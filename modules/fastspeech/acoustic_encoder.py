@@ -60,6 +60,7 @@ class FastSpeech2Acoustic(nn.Module):
             use_rope=hparams.get('use_rope', False), rope_interleaved=hparams.get('rope_interleaved', True),
             mix_ln_layer=self.mix_ln_layer, rope_theta=hparams.get('rope_theta', 10000),
             use_laurel_block=hparams.get('use_laurel_block', False),
+            mixln_shuffle_speakers=hparams.get('mixln_shuffle_speakers', False),
         )
 
         self.pitch_embed = AdamWLinear(1, hparams['hidden_size'])
