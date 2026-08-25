@@ -2,14 +2,12 @@ import torch.nn
 from modules.backbones.wavenet import WaveNet
 from modules.backbones.lynxnet import LYNXNet
 from modules.backbones.lynxnet2 import LYNXNet2
-from modules.backbones.lynxnet2_sep import LYNXNet2Sep
 from utils import filter_kwargs
 
 BACKBONES = {
     'wavenet': WaveNet,
     'lynxnet': LYNXNet,
     'lynxnet2': LYNXNet2,
-    'lynxnet2_sep': LYNXNet2Sep,
 }
 
 

@@ -55,8 +55,6 @@ class FastSpeech2Variance(nn.Module):
                 sdp_ratio=hparams.get('sdp_ratio', 0.2),
                 sdp_n_chans=hparams.get('sdp_n_chans', 192),
                 gin_channels=hparams['hidden_size'] if hparams['use_spk_id'] else 0,
-                use_mdn=hparams.get('use_mdn', False),
-                mdn_args=hparams.get('mdn_args', None),
             )
 
     def forward(

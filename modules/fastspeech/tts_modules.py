@@ -7,8 +7,6 @@ from modules.commons.rotary_embedding_torch import RotaryEmbedding
 from modules.commons.common_layers import SinusoidalPositionalEmbedding, EncSALayer, AdamWLinear
 from modules.commons.espnet_positional_embedding import RelPositionalEncoding
 from modules.sdp.sdp import StochasticDurationPredictor
-from modules.mdn.mdn import MDNLayer, mdn_nll_loss
-
 DEFAULT_MAX_SOURCE_POSITIONS = 2000
 DEFAULT_MAX_TARGET_POSITIONS = 2000
 
@@ -69,8 +67,7 @@ class DurationPredictor(torch.nn.Module):
 
     def __init__(self, in_dims, n_layers=2, n_chans=384, kernel_size=3,
                  dropout_rate=0.1, offset=1.0, dur_loss_type='mse', arch='resnet',
-                 use_sdp=False, sdp_ratio=0.2, sdp_n_chans=192, gin_channels=0,
-                 use_mdn=False, mdn_args=None):
+                 use_sdp=False, sdp_ratio=0.2, sdp_n_chans=192, gin_channels=0):
         """Initialize duration predictor module.
         Args:
             in_dims (int): Input dimension.
@@ -85,9 +82,6 @@ class DurationPredictor(torch.nn.Module):
             sdp_ratio (float, optional): Interpolation ratio between SDP and DP outputs during inference.
             sdp_n_chans (int, optional): Hidden channels for SDP.
             gin_channels (int, optional): Speaker embedding channels for SDP conditioning.
-            use_mdn (bool, optional): Use a Gaussian mixture head (NLL) instead of a
-                single-Gaussian regression head. Mutually exclusive with use_sdp.
-            mdn_args (dict, optional): MDN hyper-parameters (num_gaussians, clamps...).
         """
         super(DurationPredictor, self).__init__()
         self.offset = offset
@@ -128,27 +122,12 @@ class DurationPredictor(torch.nn.Module):
         else:
             raise NotImplementedError()
 
-        self.use_mdn = use_mdn
-        self.mdn_args = mdn_args or {}
-        if self.use_mdn:
-            self.mdn = MDNLayer(
-                in_features=n_chans,
-                num_gaussians=self.mdn_args.get('num_gaussians', 4),
-                log_p_min=float(self.mdn_args.get('log_p_min', -7.0)),
-                log_sigma_min=float(self.mdn_args.get('log_sigma_min', -7.0)),
-                sigma_floor=float(self.mdn_args.get('sigma_floor', 1e-6)),
-                log_scale_max=float(self.mdn_args.get('log_scale_max', 6.0)),
-                log_scale_min=float(self.mdn_args.get('log_scale_min', -1.0)),
-            )
-            self.linear = None
-        else:
-            self.linear = AdamWLinear(n_chans, self.out_dims)
+        self.linear = AdamWLinear(n_chans, self.out_dims)
 
         self.use_sdp = use_sdp
         self.sdp_ratio = sdp_ratio
 
         if self.use_sdp:
-            assert not self.use_mdn, 'use_sdp and use_mdn are mutually exclusive'
             self.sdp = StochasticDurationPredictor(
                 in_channels=in_dims,
                 filter_channels=sdp_n_chans,
@@ -207,25 +186,9 @@ class DurationPredictor(torch.nn.Module):
         sdp_pred = None
 
         # ---- output head --------------------------------------------------
-        if self.use_mdn:
-            # raw log-domain mixture params; the point estimate (mean of the
-            # most probable component) is the deterministic linear-domain
-            # prediction used for downstream mel2ph building.
-            logit_p, log_sigma, mu = self.mdn(dp_feat)
-            log_mu_map = self.mdn.point_estimate(logit_p, log_sigma, mu)
-            dur_pred = log_mu_map.exp() - self.offset  # linear domain [B, Tmax]
-            dur_pred = dur_pred * non_pad_mask_2d.squeeze(-1)
-            # MDN is trained by NLL on the log-domain target. Reuse the
-            # `loss_sdp` slot (mutually exclusive with use_sdp) to carry the
-            # masked per-phoneme NLL back to the training task.
-            if not infer and ph_dur is not None:
-                log_dur_gt = torch.log(ph_dur.float() + self.offset)
-                nll = mdn_nll_loss(self.mdn, logit_p, log_sigma, mu, log_dur_gt, masks=x_masks)
-                loss_sdp = nll.sum() / (non_pad_mask.sum() + 1e-8)
-        else:
-            dp_xs = self.linear(dp_feat)             # [B, Tmax, C]
-            dp_xs = dp_xs * non_pad_mask_2d          # Mask padded areas [B, Tmax, C]
-            dur_pred = self.out2dur(dp_xs)           # Convert to linear domain [B, Tmax]
+        dp_xs = self.linear(dp_feat)             # [B, Tmax, C]
+        dp_xs = dp_xs * non_pad_mask_2d          # Mask padded areas [B, Tmax, C]
+        dur_pred = self.out2dur(dp_xs)           # Convert to linear domain [B, Tmax]
 
         if self.use_sdp and sdp_cond is not None:
             sdp_cond_t = sdp_cond.transpose(1, -1)   # [B, idim, Tmax]

@@ -1,7 +1,6 @@
 import matplotlib
 import torch
 import torch.distributions
-import torch.nn.functional as F
 import torch.optim
 import torch.utils.data
 
@@ -94,9 +93,6 @@ class VarianceTask(BaseTask):
         self.predict_dur = hparams['predict_dur']
         if self.predict_dur:
             self.lambda_dur_loss = hparams['lambda_dur_loss']
-            # Note-level duration conservation weight (used when pitch and
-            # duration are trained together on the shared linguistic encoder).
-            self.lambda_note_dur_loss = hparams.get('lambda_note_dur_loss', 0.3)
 
         self.predict_pitch = hparams['predict_pitch']
         if self.predict_pitch:
@@ -203,12 +199,6 @@ class VarianceTask(BaseTask):
             self.register_validation_loss('dur_loss')
             self.register_validation_metric('rhythm_corr', RhythmCorrectness(tolerance=0.05))
             self.register_validation_metric('ph_dur_acc', PhonemeDurationAccuracy(tolerance=0.2))
-            # Note-level conservation loss (MDN, joint pitch+duration training).
-            # Must be registered iff run_model can emit it, else validation
-            # raises KeyError when iterating the returned losses.
-            if hparams.get('use_mdn', False) and self.predict_pitch \
-                    and self.lambda_note_dur_loss > 0:
-                self.register_validation_loss('dur_note_loss')
             if hparams.get('use_sdp', False):
                 self.dur_sdp_loss = DurationLoss(
                     offset=dur_hparams['log_offset'],
@@ -302,44 +292,7 @@ class VarianceTask(BaseTask):
         else:
             losses = {}
             if dur_pred is not None:
-                if hparams.get('use_mdn', False):
-                    # DurationPredictor computes the masked per-phoneme NLL on
-                    # the log-domain target and returns it in the `sdp_loss`
-                    # slot (use_mdn and use_sdp are mutually exclusive).
-                    # The token padding mask (txt_tokens == PAD_INDEX) is
-                    # applied inside the predictor, so no ph2word mask here.
-                    losses['dur_loss'] = self.lambda_dur_loss * sdp_loss
-                    # Note-level duration conservation. When pitch and duration
-                    # are trained together (shared linguistic encoder), the
-                    # encoder already conditions on note durations
-                    # (word_dur_embed); this term makes the duration branch
-                    # explicitly learn the note-internal allocation ratio by
-                    # constraining the sum of predicted phoneme durations
-                    # within each note to match the note duration (SV/NNSVS
-                    # style). Auto-enabled for the joint pitch+duration setup.
-                    if self.predict_pitch and self.predict_dur and ph2word is not None \
-                            and self.lambda_note_dur_loss > 0:
-                        n_words = ph2word.max() + 1
-                        # ph_dur may be int64 (frame counts); scatter_add requires
-                        # self.dtype == src.dtype, so allocate float32 explicitly.
-                        w_gt = torch.zeros(
-                            ph2word.shape[0], n_words, dtype=torch.float32,
-                            device=ph_dur.device
-                        ).scatter_add(1, ph2word, ph_dur.float())[:, 1:]   # drop padding slot
-                        w_pred = torch.zeros(
-                            ph2word.shape[0], n_words, dtype=torch.float32,
-                            device=ph_dur.device
-                        ).scatter_add(1, ph2word, dur_pred.float())[:, 1:]
-                        note_mask = w_gt > 0
-                        if note_mask.any():
-                            note_loss = F.mse_loss(
-                                torch.log(w_pred[note_mask] + 1.0),
-                                torch.log(w_gt[note_mask] + 1.0),
-                                reduction='mean'
-                            )
-                            losses['dur_note_loss'] = self.lambda_note_dur_loss * note_loss
-                else:
-                    losses['dur_loss'] = self.lambda_dur_loss * self.dur_loss(dur_pred, ph_dur, ph2word=ph2word)
+                losses['dur_loss'] = self.lambda_dur_loss * self.dur_loss(dur_pred, ph_dur, ph2word=ph2word)
                 if hparams.get('use_sdp', False):
                     losses['sdp_flow_loss'] = self.sdp_flow_loss(sdp_loss) * self.lambda_sdp_loss
                     lambda_sdp_reg_base = hparams.get('lambda_sdp_reg_loss', 0.1)
