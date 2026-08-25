@@ -102,13 +102,6 @@ class AcousticTask(BaseTask):
         if self.xm_best_of_k > 1:
             if self.diffusion_type != 'reflow':
                 raise ValueError('Explorative Modeling currently supports Rectified Flow only.')
-            if self.use_shallow_diffusion:
-                raise ValueError('Explorative Modeling currently requires use_shallow_diffusion=false.')
-            if hparams.get('use_dual_timestep', False):
-                raise ValueError(
-                    'Explorative Modeling does not support use_dual_timestep yet; '
-                    'the candidate timestep/mask would not be threaded through training_forward.'
-                )
         super()._finish_init()
 
         # ── Fuse LYNXNet2 backbone kernels (in-place) ──
@@ -185,31 +178,28 @@ class AcousticTask(BaseTask):
             languages = sample['languages']
         else:
             languages = None
+        diffusion_fn = None
         if not infer and self.xm_best_of_k > 1:
-            condition = self.model.encode_condition(
-                txt_tokens, mel2ph=mel2ph, f0=f0, **variances,
-                key_shift=key_shift, speed=speed,
-                spk_embed_id=spk_embed_id, languages=languages
-            )
             non_padding = (mel2ph > 0).unsqueeze(-1).float()
-            output = ShallowDiffusionOutput(
-                diff_out=run_reflow_xm(
+
+            def diffusion_fn(condition, gt_mel):
+                return run_reflow_xm(
                     self.model.diffusion,
                     condition,
-                    target,
+                    gt_mel,
                     self.mel_loss,
                     non_padding,
                     self.xm_best_of_k,
                     self.xm_chunk_size,
                 )
-            )
-        else:
-            output: ShallowDiffusionOutput = self.model(
-                txt_tokens, mel2ph=mel2ph, f0=f0, **variances,
-                key_shift=key_shift, speed=speed,
-                spk_embed_id=spk_embed_id, languages=languages,
-                gt_mel=target, infer=infer
-            )
+
+        output: ShallowDiffusionOutput = self.model(
+            txt_tokens, mel2ph=mel2ph, f0=f0, **variances,
+            key_shift=key_shift, speed=speed,
+            spk_embed_id=spk_embed_id, languages=languages,
+            gt_mel=target, infer=infer,
+            diffusion_fn=diffusion_fn,
+        )
 
         if infer:
             return output

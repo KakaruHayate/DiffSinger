@@ -34,54 +34,85 @@ class RectifiedFlow(nn.Module):
         self.register_buffer('spec_min', spec_min, persistent=False)
         self.register_buffer('spec_max', spec_max, persistent=False)
 
-    def prepare_training_inputs(self, gt_spec, t=None, noise=None):
-        """Normalize a ground-truth target and (optionally) an external noise sample.
+    def _sample_train_timesteps(self, batch_size, num_frames, device):
+        """Sample one (or a dual pair of) timesteps plus a per-frame mask.
 
-        :return: ``(spec, t, noise)`` where ``spec`` is the normalized target in the
-            shape the denoiser expects (``[B, F, M, T]``), ``t`` is one timestep per
-            batch element, and ``noise`` is the start-of-flow noise used for the
-            Rectified Flow interpolation. When ``t``/``noise`` are omitted they are
-            sampled here so Explorative Modeling can replay an identical candidate
-            (same noise) with gradients after a no-gradient exploration pass.
+        Mirrors the sampling distribution used by ``forward`` so that
+        Explorative Modeling explores the exact same objective as the baseline:
+        ``t1`` lives in ``[T_start, 1]`` (shallow diffusion start) and, when
+        ``use_dual_timestep``, a second ``t2`` and a per-frame 25%-density mask
+        are sampled.
+        """
+        t1 = self.t_start + (1.0 - self.t_start) * torch.rand((batch_size, 1), device=device)
+        if self.use_dual_timestep:
+            t2 = self.t_start + (1.0 - self.t_start) * torch.rand((batch_size, 1), device=device)
+            mask = (torch.rand(batch_size, num_frames, device=device) < 0.25).float()
+        else:
+            t2 = None
+            mask = None
+        return t1, t2, mask
+
+    def prepare_training_inputs(
+            self, gt_spec, t1=None, t2=None, mask=None, noise=None,
+            num_frames=None
+    ):
+        """Normalize a ground-truth target and (optionally) timestep/noise.
+
+        :return: ``(spec, t1, t2, mask, noise)`` where ``spec`` is the
+            normalized target in the shape the denoiser expects (``[B, F, M, T]``).
+            Timesteps/``mask`` are supplied by the caller when known (Explorative
+            Modeling samplesthem once and replays the winner) and sampled here
+            otherwise using the same distribution as ``forward``. ``noise`` is the
+            start-of-flow noise used for the interpolation.
         """
         spec = self.norm_spec(gt_spec).transpose(-2, -1)
         if self.num_feats == 1:
             spec = spec[:, None, :, :]
         batch_size = spec.shape[0]
-        if t is None:
-            t = self.t_start + (1.0 - self.t_start) * torch.rand(
-                (batch_size,), device=spec.device
-            )
+        num_frames = spec.shape[-1] if num_frames is None else num_frames
+        device = spec.device
+        if t1 is None:
+            t1, t2, mask = self._sample_train_timesteps(batch_size, num_frames, device)
         else:
-            t = t.to(spec)
+            t1 = t1.to(spec)
+            if t2 is not None:
+                t2 = t2.to(spec)
+            if mask is not None:
+                mask = mask.to(spec)
         if noise is None:
             noise = torch.randn_like(spec)
         else:
             noise = noise.to(spec)
-        return spec, t, noise
+        return spec, t1, t2, mask, noise
 
     def p_losses(self, x_end, t1, cond, t2=None, mask=None, noise=None):
         t = t1 if mask is None else t1 + (t2 - t1) * mask
         x_start = torch.randn_like(x_end) if noise is None else noise
-        batch_size = x_end.shape[0]
-        x_t = x_start + t.reshape(batch_size, 1, 1, 1) * (x_end - x_start)
+        # ``t`` is [B, 1] (single step) or [B, T] (dual, per-frame); the
+        # ``[:, None, None, :]`` index broadcasts t over the channel/bins dims.
+        x_t = x_start + t[:, None, None, :] * (x_end - x_start)
         s1 = t1 * self.time_scale_factor
         s2 = None if t2 is None else t2 * self.time_scale_factor
         v_pred = self.velocity_fn(x_t, s1, cond, s2, mask)
 
         return v_pred, x_end - x_start, t
 
-    def training_forward(self, condition, gt_spec, t=None, noise=None):
-        """Training entry point that keeps the flow noise boundary explicit.
+    def training_forward(
+            self, condition, gt_spec, t1=None, t2=None, mask=None, noise=None
+    ):
+        """Training entry point that keeps timestep/noise boundaries explicit.
 
         Explorative Modeling uses this to evaluate many candidate noises without
-        gradients and then replay the winning candidate (same ``t``/``noise``) with
-        gradients so upstream condition encoders remain trainable. Falls back to the
-        standard single-flow objective when ``noise`` is ``None``.
+        gradients and then replay the winning candidate (same timesteps + noise)
+        with gradients so upstream condition encoders remain trainable. When the
+        timesteps/``noise`` are omitted, the standard single-flow objective is
+        produced (identical distribution to ``forward``).
         """
         cond = condition.transpose(1, 2)
-        spec, t, noise = self.prepare_training_inputs(gt_spec, t=t, noise=noise)
-        v_pred, v_gt, t = self.p_losses(spec, t, cond=cond, noise=noise)
+        spec, t1, t2, mask, noise = self.prepare_training_inputs(
+            gt_spec, t1=t1, t2=t2, mask=mask, noise=noise
+        )
+        v_pred, v_gt, t = self.p_losses(spec, t1, cond=cond, t2=t2, mask=mask, noise=noise)
         return v_pred, v_gt, t
 
     def forward(self, condition, gt_spec=None, src_spec=None, infer=True):
@@ -90,19 +121,7 @@ class RectifiedFlow(nn.Module):
         device = condition.device
 
         if not infer:
-            # gt_spec: [B, T, M] or [B, F, T, M]
-            spec = self.norm_spec(gt_spec).transpose(-2, -1)  # [B, M, T] or [B, F, M, T]
-            if self.num_feats == 1:
-                spec = spec[:, None, :, :]  # [B, F=1, M, T]
-            t1 = self.t_start + (1.0 - self.t_start) * torch.rand((b, 1), device=device)
-            if self.use_dual_timestep:
-                t2 = self.t_start + (1.0 - self.t_start) * torch.rand((b, 1), device=device)
-                mask = (torch.rand(b, n_frames, device=device) < 0.25).float()
-            else:
-                t2 = None
-                mask = None
-            v_pred, v_gt, t = self.p_losses(spec, t1, cond=cond, t2=t2, mask=mask)
-            return v_pred, v_gt, t
+            return self.training_forward(condition, gt_spec)
         else:
             # src_spec: [B, T, M] or [B, F, T, M]
             if src_spec is not None:

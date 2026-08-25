@@ -93,7 +93,8 @@ class DiffSingerAcoustic(CategorizedModule, ParameterAdaptorModule):
 
     def forward(
             self, txt_tokens, mel2ph, f0, key_shift=None, speed=None,
-            spk_embed_id=None, languages=None, gt_mel=None, infer=True, **kwargs
+            spk_embed_id=None, languages=None, gt_mel=None, infer=True,
+            diffusion_fn=None, **kwargs
     ) -> ShallowDiffusionOutput:
         condition = self.encode_condition(
             txt_tokens, mel2ph, f0, key_shift=key_shift, speed=speed,
@@ -114,21 +115,21 @@ class DiffSingerAcoustic(CategorizedModule, ParameterAdaptorModule):
             mel_pred *= ((mel2ph > 0).float()[:, :, None])
             return ShallowDiffusionOutput(aux_out=aux_mel_pred, diff_out=mel_pred)
         else:
+            diff_fn = diffusion_fn or (
+                lambda cond, gt: self.diffusion(cond, gt_spec=gt, infer=False)
+            )
             if self.use_shallow_diffusion:
                 if self.train_aux_decoder:
                     aux_cond = condition * self.aux_decoder_grad + condition.detach() * (1 - self.aux_decoder_grad)
                     aux_out = self.aux_decoder(aux_cond, infer=False)
                 else:
                     aux_out = None
-                if self.train_diffusion:
-                    diff_out = self.diffusion(condition, gt_spec=gt_mel, infer=False)
-                else:
-                    diff_out = None
+                diff_out = diff_fn(condition, gt_mel) if self.train_diffusion else None
                 return ShallowDiffusionOutput(aux_out=aux_out, diff_out=diff_out)
 
             else:
                 aux_out = None
-                diff_out = self.diffusion(condition, gt_spec=gt_mel, infer=False)
+                diff_out = diff_fn(condition, gt_mel)
                 return ShallowDiffusionOutput(aux_out=aux_out, diff_out=diff_out)
 
 
