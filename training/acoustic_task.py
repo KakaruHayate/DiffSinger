@@ -1,5 +1,3 @@
-import math
-
 import matplotlib
 import torch
 import torch.distributions
@@ -12,6 +10,7 @@ from basics.base_dataset import BaseDataset
 from basics.base_task import BaseTask
 from basics.base_vocoder import BaseVocoder
 from modules.aux_decoder import build_aux_loss
+from modules.core.xm import run_reflow_xm
 from modules.losses import DiffusionLoss, RectifiedFlowLoss
 from modules.toplevel import DiffSingerAcoustic, ShallowDiffusionOutput
 from modules.vocoders.registry import get_vocoder_cls
@@ -161,58 +160,6 @@ class AcousticTask(BaseTask):
             raise ValueError(f"Unknown diffusion type: {self.diffusion_type}")
         self.register_validation_loss('mel_loss')
 
-    def _run_reflow_xm(self, condition, target, non_padding):
-        diffusion = self.model.diffusion
-        spec, t, _ = diffusion.prepare_training_inputs(target)
-        batch_size = spec.shape[0]
-        best_losses = torch.full((batch_size,), float('inf'), device=spec.device)
-        best_noise = torch.empty_like(spec)
-        # The winning candidate is replayed after a no-grad search, so every
-        # stochastic state except the explored noise must remain identical.
-        dropout_modules = [
-            module for module in diffusion.modules()
-            if isinstance(module, torch.nn.Dropout) and module.p > 0.
-        ]
-        if dropout_modules:
-            raise RuntimeError(
-                'Explorative Modeling save-memory replay requires diffusion backbone dropout_rate=0.'
-            )
-
-        num_chunks = math.ceil(self.xm_best_of_k / self.xm_chunk_size)
-        with torch.no_grad():
-            for chunk_idx in range(num_chunks):
-                chunk_candidates = min(
-                    self.xm_chunk_size,
-                    self.xm_best_of_k - chunk_idx * self.xm_chunk_size
-                )
-                noise = torch.randn(
-                    (chunk_candidates, *spec.shape),
-                    device=spec.device,
-                    dtype=spec.dtype
-                )
-                chunk_condition = torch.cat([condition.detach()] * chunk_candidates, dim=0)
-                chunk_target = torch.cat([target] * chunk_candidates, dim=0)
-                chunk_t = torch.cat([t] * chunk_candidates, dim=0)
-                chunk_non_padding = torch.cat([non_padding] * chunk_candidates, dim=0)
-                v_pred, v_gt, _ = diffusion.training_forward(
-                    chunk_condition, chunk_target,
-                    t=chunk_t, noise=noise.flatten(0, 1)
-                )
-                chunk_losses = self.mel_loss(
-                    v_pred, v_gt, t=chunk_t,
-                    non_padding=chunk_non_padding, reduction='none'
-                ).reshape(chunk_candidates, batch_size)
-                chunk_best_losses, chunk_best_indices = chunk_losses.min(dim=0)
-                batch_indices = torch.arange(batch_size, device=spec.device)
-                chunk_best_noise = noise[chunk_best_indices, batch_indices]
-                replace = chunk_best_losses < best_losses
-                best_losses[replace] = chunk_best_losses[replace]
-                best_noise[replace] = chunk_best_noise[replace]
-
-        if hasattr(torch, 'clear_autocast_cache'):
-            torch.clear_autocast_cache()
-        return diffusion.training_forward(condition, target, t=t, noise=best_noise)
-
     def run_model(self, sample, infer=False):
         txt_tokens = sample['tokens']  # [B, T_ph]
         target = sample['mel']  # [B, T_s, M]
@@ -241,7 +188,15 @@ class AcousticTask(BaseTask):
             )
             non_padding = (mel2ph > 0).unsqueeze(-1).float()
             output = ShallowDiffusionOutput(
-                diff_out=self._run_reflow_xm(condition, target, non_padding)
+                diff_out=run_reflow_xm(
+                    self.model.diffusion,
+                    condition,
+                    target,
+                    self.mel_loss,
+                    non_padding,
+                    self.xm_best_of_k,
+                    self.xm_chunk_size,
+                )
             )
         else:
             output: ShallowDiffusionOutput = self.model(
