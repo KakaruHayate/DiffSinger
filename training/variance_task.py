@@ -120,9 +120,10 @@ class VarianceTask(BaseTask):
         # at larger max_batch_frames (benchmarked ~1.3-1.6x at 24k frames,
         # slightly negative below ~10k).
         self._fused_kernels_patched = 0
-        self._fused_kernels_fallback = False
+        self._fused_kernel_backbones = []
         if hparams.get('use_fused_kernels', False):
             try:
+                from modules.backbones.lynxnet2 import LYNXNet2
                 from modules.kernels.integration import patch_diffusion_module
                 from lightning.pytorch.utilities.rank_zero import rank_zero_info
                 # Each predictor has its own backbone config; patch only the ones
@@ -139,6 +140,11 @@ class VarianceTask(BaseTask):
                     glu = (hparams.get(args_key) or {}).get('backbone_args', {}).get('glu_type', 'swiglu')
                     n = patch_diffusion_module(predictor, glu_type=glu)
                     self._fused_kernels_patched += n
+                    if n > 0:
+                        for attr in ('denoise_fn', 'velocity_fn'):
+                            backbone = getattr(predictor, attr, None)
+                            if isinstance(backbone, LYNXNet2):
+                                self._fused_kernel_backbones.append(backbone)
 
                     rank_zero_info(
                         'Fused kernels: patched %d LYNXNet2 blocks in %s (glu_type=%s)',
@@ -147,38 +153,18 @@ class VarianceTask(BaseTask):
             except ImportError as e:
                 from lightning.pytorch.utilities.rank_zero import rank_zero_info
                 rank_zero_info('Fused kernels unavailable (ImportError: %s); running eager.', e)
-                self._fused_kernels_fallback = True
 
     def on_fit_start(self):
         # Warm Triton autotune caches after the model is on its CUDA device,
         # so the first training steps don't pay the per-bucket benchmark cost.
         # Mirrors AcousticTask.on_fit_start, but sweeps both predictors.
         if self._fused_kernels_patched > 0 and self.device.type == 'cuda':
-            from modules.kernels.integration import warmup_fused_backbone
-            from lightning.pytorch.utilities.rank_zero import rank_zero_info
-            precision = str(hparams.get('pl_trainer_precision', '32'))
-            autocast_dtype = (
-                torch.float16 if '16' in precision and 'bf16' not in precision
-                else torch.bfloat16 if 'bf16' in precision
-                else None
+            from modules.kernels.integration import warmup_fused_backbones
+            warmup_fused_backbones(
+                self._fused_kernel_backbones,
+                max_frames=hparams['max_batch_frames'],
+                precision=self.trainer.precision,
             )
-            if autocast_dtype is None:
-                rank_zero_info(
-                    'Fused kernels: precision=%s has no autocast dtype; '
-                    'fused kernel will fall back to eager at runtime.', precision
-                )
-            for predictor_attr in ('pitch_predictor', 'variance_predictor'):
-                predictor = getattr(self.model, predictor_attr, None)
-                if predictor is None:
-                    continue
-                for attr in ('denoise_fn', 'velocity_fn'):
-                    backbone = getattr(predictor, attr, None)
-                    if backbone is not None:
-                        warmup_fused_backbone(
-                            backbone,
-                            max_frames=hparams['max_batch_frames'],
-                            autocast_dtype=autocast_dtype,
-                        )
 
     def _build_model(self):
         return DiffSingerVariance(
