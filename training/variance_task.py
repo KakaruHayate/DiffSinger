@@ -126,6 +126,12 @@ class VarianceTask(BaseTask):
             raise ValueError('xm_pitch_best_of_k > 1 requires predict_pitch=true.')
         if self.xm_variance_best_of_k > 1 and not self.predict_variances:
             raise ValueError('xm_variance_best_of_k > 1 requires at least one predicted variance.')
+        if (self.xm_pitch_best_of_k > 1 or self.xm_variance_best_of_k > 1) \
+                and hparams.get('use_dual_timestep', False):
+            raise ValueError(
+                'Explorative Modeling does not support use_dual_timestep yet; '
+                'the candidate timestep/mask would not be threaded through training_forward.'
+            )
         super()._finish_init()
 
         # ── Fuse LYNXNet2 backbone kernels (in-place) ──

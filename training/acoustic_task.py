@@ -104,6 +104,11 @@ class AcousticTask(BaseTask):
                 raise ValueError('Explorative Modeling currently supports Rectified Flow only.')
             if self.use_shallow_diffusion:
                 raise ValueError('Explorative Modeling currently requires use_shallow_diffusion=false.')
+            if hparams.get('use_dual_timestep', False):
+                raise ValueError(
+                    'Explorative Modeling does not support use_dual_timestep yet; '
+                    'the candidate timestep/mask would not be threaded through training_forward.'
+                )
         super()._finish_init()
 
         # ── Fuse LYNXNet2 backbone kernels (in-place) ──
