@@ -143,6 +143,7 @@ class VarianceTask(BaseTask):
                     glu = (hparams.get(args_key) or {}).get('backbone_args', {}).get('glu_type', 'swiglu')
                     n = patch_diffusion_module(predictor, glu_type=glu)
                     self._fused_kernels_patched += n
+
                     rank_zero_info(
                         'Fused kernels: patched %d LYNXNet2 blocks in %s (glu_type=%s)',
                         n, predictor_attr, glu
