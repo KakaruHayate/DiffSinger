@@ -6,7 +6,6 @@ from modules.commons.common_layers import (
     ATanGLU,
     AdamWConv1d,
     AdamWLinear,
-    DoubleSoftSignGLU,
     SinusoidalPosEmb,
     SoftSignGLU,
     SwiGLU,
@@ -26,8 +25,6 @@ class LYNXNet2Block(nn.Module):
             _glu = ATanGLU()
         elif glu_type == 'softsign_glu':
             _glu = SoftSignGLU()
-        elif glu_type == 'double_softsign_glu':
-            _glu = DoubleSoftSignGLU()
         else:
             raise ValueError(f'{glu_type} is not a valid activation')
         if float(dropout) > 0.:
