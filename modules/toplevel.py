@@ -81,11 +81,22 @@ class DiffSingerAcoustic(CategorizedModule, ParameterAdaptorModule):
         else:
             raise NotImplementedError(self.diffusion_type)
 
+    def encode_condition(
+            self, txt_tokens, mel2ph, f0, key_shift=None, speed=None,
+            spk_embed_id=None, languages=None, **kwargs
+    ):
+        return self.fs2(
+            txt_tokens, mel2ph, f0, key_shift=key_shift, speed=speed,
+            spk_embed_id=spk_embed_id, languages=languages,
+            **kwargs
+        )
+
     def forward(
             self, txt_tokens, mel2ph, f0, key_shift=None, speed=None,
-            spk_embed_id=None, languages=None, gt_mel=None, infer=True, **kwargs
+            spk_embed_id=None, languages=None, gt_mel=None, infer=True,
+            diffusion_fn=None, **kwargs
     ) -> ShallowDiffusionOutput:
-        condition = self.fs2(
+        condition = self.encode_condition(
             txt_tokens, mel2ph, f0, key_shift=key_shift, speed=speed,
             spk_embed_id=spk_embed_id, languages=languages,
             **kwargs
@@ -104,21 +115,21 @@ class DiffSingerAcoustic(CategorizedModule, ParameterAdaptorModule):
             mel_pred *= ((mel2ph > 0).float()[:, :, None])
             return ShallowDiffusionOutput(aux_out=aux_mel_pred, diff_out=mel_pred)
         else:
+            diff_fn = diffusion_fn or (
+                lambda cond, gt: self.diffusion(cond, gt_spec=gt, infer=False)
+            )
             if self.use_shallow_diffusion:
                 if self.train_aux_decoder:
                     aux_cond = condition * self.aux_decoder_grad + condition.detach() * (1 - self.aux_decoder_grad)
                     aux_out = self.aux_decoder(aux_cond, infer=False)
                 else:
                     aux_out = None
-                if self.train_diffusion:
-                    diff_out = self.diffusion(condition, gt_spec=gt_mel, infer=False)
-                else:
-                    diff_out = None
+                diff_out = diff_fn(condition, gt_mel) if self.train_diffusion else None
                 return ShallowDiffusionOutput(aux_out=aux_out, diff_out=diff_out)
 
             else:
                 aux_out = None
-                diff_out = self.diffusion(condition, gt_spec=gt_mel, infer=False)
+                diff_out = diff_fn(condition, gt_mel)
                 return ShallowDiffusionOutput(aux_out=aux_out, diff_out=diff_out)
 
 
@@ -235,7 +246,7 @@ class DiffSingerVariance(CategorizedModule, ParameterAdaptorModule):
             base_pitch=None, pitch=None, pitch_expr=None, pitch_retake=None,
             variance_retake: Dict[str, Tensor] = None,
             spk_id=None, languages=None,
-            infer=True, **kwargs
+            infer=True, pitch_predictor_fn=None, variance_predictor_fn=None, **kwargs
     ):
         if self.use_spk_id:
             ph_spk_mix_embed = kwargs.get('ph_spk_mix_embed')
@@ -333,7 +344,11 @@ class DiffSingerVariance(CategorizedModule, ParameterAdaptorModule):
             if infer:
                 pitch_pred_out = self.pitch_predictor(pitch_cond, infer=True)
             else:
-                pitch_pred_out = self.pitch_predictor(pitch_cond, pitch - base_pitch, infer=False)
+                pitch_target = pitch - base_pitch
+                if pitch_predictor_fn is None:
+                    pitch_pred_out = self.pitch_predictor(pitch_cond, pitch_target, infer=False)
+                else:
+                    pitch_pred_out = pitch_predictor_fn(pitch_cond, pitch_target)
         else:
             pitch_pred_out = None
 
@@ -359,7 +374,10 @@ class DiffSingerVariance(CategorizedModule, ParameterAdaptorModule):
             ]
             var_cond += torch.stack(variance_embeds, dim=-1).sum(-1)
 
-        variance_outputs = self.variance_predictor(var_cond, variance_inputs, infer=infer)
+        if not infer and variance_predictor_fn is not None:
+            variance_outputs = variance_predictor_fn(var_cond, variance_inputs)
+        else:
+            variance_outputs = self.variance_predictor(var_cond, variance_inputs, infer=infer)
 
         if infer:
             variances_pred_out = self.collect_variance_outputs(variance_outputs)

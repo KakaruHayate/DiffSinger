@@ -1,5 +1,3 @@
-import math
-
 import matplotlib
 import torch
 import torch.distributions
@@ -12,6 +10,7 @@ from basics.base_dataset import BaseDataset
 from basics.base_task import BaseTask
 from basics.base_vocoder import BaseVocoder
 from modules.aux_decoder import build_aux_loss
+from modules.core.xm import run_reflow_xm
 from modules.losses import DiffusionLoss, RectifiedFlowLoss
 from modules.toplevel import DiffSingerAcoustic, ShallowDiffusionOutput
 from modules.vocoders.registry import get_vocoder_cls
@@ -94,6 +93,15 @@ class AcousticTask(BaseTask):
             self.required_variances.append('voicing')
         if hparams['use_tension_embed']:
             self.required_variances.append('tension')
+        self.xm_best_of_k = int(hparams.get('xm_best_of_k', 1))
+        self.xm_chunk_size = int(hparams.get('xm_chunk_size', 1))
+        if self.xm_best_of_k < 1:
+            raise ValueError('xm_best_of_k must be at least 1.')
+        if self.xm_chunk_size < 1:
+            raise ValueError('xm_chunk_size must be at least 1.')
+        if self.xm_best_of_k > 1:
+            if self.diffusion_type != 'reflow':
+                raise ValueError('Explorative Modeling currently supports Rectified Flow only.')
         super()._finish_init()
 
         # ── Fuse LYNXNet2 backbone kernels (in-place) ──
@@ -170,11 +178,27 @@ class AcousticTask(BaseTask):
             languages = sample['languages']
         else:
             languages = None
+        diffusion_fn = None
+        if not infer and self.xm_best_of_k > 1:
+            non_padding = (mel2ph > 0).unsqueeze(-1).float()
+
+            def diffusion_fn(condition, gt_mel):
+                return run_reflow_xm(
+                    self.model.diffusion,
+                    condition,
+                    gt_mel,
+                    self.mel_loss,
+                    non_padding,
+                    self.xm_best_of_k,
+                    self.xm_chunk_size,
+                )
+
         output: ShallowDiffusionOutput = self.model(
             txt_tokens, mel2ph=mel2ph, f0=f0, **variances,
             key_shift=key_shift, speed=speed,
             spk_embed_id=spk_embed_id, languages=languages,
-            gt_mel=target, infer=infer
+            gt_mel=target, infer=infer,
+            diffusion_fn=diffusion_fn,
         )
 
         if infer:

@@ -96,6 +96,12 @@ main_loss_type: l2
 main_loss_log_norm: false
 schedule_type: 'linear'
 
+# Explorative Modeling for full-depth Rectified Flow training.
+# K=1 preserves the standard training objective. Larger K trades additional
+# no-gradient forward passes for candidate exploration without K-fold VRAM.
+xm_best_of_k: 1
+xm_chunk_size: 1
+
 # shallow diffusion
 use_shallow_diffusion: true
 T_start: 0.4

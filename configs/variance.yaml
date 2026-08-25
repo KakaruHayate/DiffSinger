@@ -130,6 +130,13 @@ timesteps: 1000
 max_beta: 0.02
 main_loss_type: l2
 main_loss_log_norm: true
+
+# Low-memory Forward XM for Rectified Flow predictors. K=1 preserves the
+# standard objective. Pitch and variance exploration can be enabled separately.
+xm_pitch_best_of_k: 1
+xm_variance_best_of_k: 1
+xm_chunk_size: 1
+
 sampling_algorithm: euler
 sampling_steps: 20
 diff_accelerator: ddim

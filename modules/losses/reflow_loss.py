@@ -39,12 +39,28 @@ class RectifiedFlowLoss(nn.Module):
         else:
             return self.loss(v_pred, v_gt)
 
-    def forward(self, v_pred: Tensor, v_gt: Tensor, t: Tensor, non_padding: Tensor = None) -> Tensor:
+    def forward(
+            self, v_pred: Tensor, v_gt: Tensor, t: Tensor,
+            non_padding: Tensor = None, reduction: str = 'mean'
+    ) -> Tensor:
         """
         :param v_pred: [B, 1, M, T]
         :param v_gt: [B, 1, M, T]
         :param t: [B, 1] or [B, T]
         :param non_padding: [B, T, M]
+        :param reduction: ``mean`` for the original scalar objective, or
+            ``none`` for one valid-frame-normalized loss per batch element.
         """
         v_pred, v_gt = self._mask_non_padding(v_pred, v_gt, non_padding)
-        return self._forward(v_pred, v_gt, t=t).mean()
+        loss = self._forward(v_pred, v_gt, t=t)
+        if reduction == 'mean':
+            return loss.mean()
+        if reduction != 'none':
+            raise ValueError(f'Unsupported reduction: {reduction}.')
+        if non_padding is None:
+            return loss.flatten(start_dim=1).mean(dim=1)
+
+        mask = non_padding.transpose(1, 2).unsqueeze(1).to(loss)
+        valid_elements = mask.flatten(start_dim=1).sum(dim=1)
+        valid_elements *= loss.shape[1] * loss.shape[2]
+        return loss.flatten(start_dim=1).sum(dim=1) / valid_elements.clamp_min(1.)
