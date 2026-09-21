@@ -1276,6 +1276,66 @@ List of 0-based encoder layer indices where Mixed LayerNorm is applied. Only tak
 <tr><td align="center"><b>constraints</b></td><td>Every element should be in the range [0, <a href="#enc_layers">enc_layers</a>).</td>
 </tbody></table>
 
+### mixln_shuffle_speakers
+
+Whether to shuffle speaker embeddings across the batch when mixing the affine (beta/gamma) parameters of `Mixed_LayerNorm` during training. Only takes effect when [use_mix_ln](#use_mix_ln) is enabled. When `false` (default), each speaker's affine parameters are applied to its own samples only, so speaker conditioning stays consistent within a step. When `true`, the affine parameters are shuffled across the batch and mixed with weights sampled from a Beta distribution (the original Mix-LN behavior), which regularizes speaker conditioning at the cost of inter-speaker leakage within a training step. Has no effect in inference.
+
+<table><tbody>
+<tr><td align="center"><b>visibility</b></td><td>acoustic</td>
+<tr><td align="center"><b>scope</b></td><td>nn, training</td>
+<tr><td align="center"><b>customizability</b></td><td>normal</td>
+<tr><td align="center"><b>type</b></td><td>bool</td>
+<tr><td align="center"><b>default</b></td><td>false</td>
+</tbody></table>
+
+### mouth_opening_estimator_ckpt
+
+Path to the checkpoint of the mouth-opening curve estimator (R3MOE). Binarizers use it to extract ground-truth mouth-opening curves whenever mouth opening is enabled — see [use_mouth_opening_embed](#use_mouth_opening_embed), [use_shift_mouth_opening_embed](#use_shift_mouth_opening_embed) and [predict_mouth_opening](#predict_mouth_opening). Required if any of them is enabled.
+
+<table><tbody>
+<tr><td align="center"><b>visibility</b></td><td>acoustic, variance</td>
+<tr><td align="center"><b>scope</b></td><td>preprocessing</td>
+<tr><td align="center"><b>customizability</b></td><td>recommended</td>
+<tr><td align="center"><b>type</b></td><td>str</td>
+<tr><td align="center"><b>default</b></td><td>checkpoints/r3moe/0508_s2k_noise_aug_0.15/ema_model_4.pt</td>
+</tbody></table>
+
+### mouth_opening_max
+
+Maximum mouth-opening value used for normalization to [-1, 1] when [predict_mouth_opening](#predict_mouth_opening) is enabled. Also serves as the upper bound of the mouth-opening range used by shift mouth-opening conditioning (see [shift_mouth_opening_args.opec_max](#shift_mouth_opening_argsopec_max)). Note that with [diffusion_type](#diffusion_type) `'ddpm'`, this value is latched into persistent buffers in checkpoints: modifying it for an existing experiment does not raise errors, but is silently overridden by the checkpoint on loading, so it only takes effect when training from scratch; with Rectified Flow it is always read from the current configuration.
+
+<table><tbody>
+<tr><td align="center"><b>visibility</b></td><td>variance</td>
+<tr><td align="center"><b>scope</b></td><td>training, inference</td>
+<tr><td align="center"><b>customizability</b></td><td>recommended</td>
+<tr><td align="center"><b>type</b></td><td>float</td>
+<tr><td align="center"><b>default</b></td><td>1.0</td>
+</tbody></table>
+
+### mouth_opening_min
+
+Minimum mouth-opening value used for normalization to [-1, 1] when [predict_mouth_opening](#predict_mouth_opening) is enabled. Also serves as the lower bound of the mouth-opening range used by shift mouth-opening conditioning (see [shift_mouth_opening_args.opec_min](#shift_mouth_opening_argsopec_min)). Note that with [diffusion_type](#diffusion_type) `'ddpm'`, this value is latched into persistent buffers in checkpoints: modifying it for an existing experiment does not raise errors, but is silently overridden by the checkpoint on loading, so it only takes effect when training from scratch; with Rectified Flow it is always read from the current configuration.
+
+<table><tbody>
+<tr><td align="center"><b>visibility</b></td><td>variance</td>
+<tr><td align="center"><b>scope</b></td><td>training, inference</td>
+<tr><td align="center"><b>customizability</b></td><td>recommended</td>
+<tr><td align="center"><b>type</b></td><td>float</td>
+<tr><td align="center"><b>default</b></td><td>0.0</td>
+</tbody></table>
+
+### mouth_opening_smooth_width
+
+Length of the sinusoidal smoothing convolution kernel (in seconds) applied to the extracted mouth-opening curve. Required whenever binarizers extract mouth-opening ground truth (see [mouth_opening_estimator_ckpt](#mouth_opening_estimator_ckpt)).
+
+<table><tbody>
+<tr><td align="center"><b>visibility</b></td><td>acoustic, variance</td>
+<tr><td align="center"><b>scope</b></td><td>preprocessing</td>
+<tr><td align="center"><b>customizability</b></td><td>normal</td>
+<tr><td align="center"><b>type</b></td><td>float</td>
+<tr><td align="center"><b>default</b></td><td>0.06</td>
+</tbody></table>
+
 ### nccl_p2p
 
 Whether to enable P2P when using NCCL as the backend. Set it to `false` if the training process is stuck upon beginning.
@@ -1631,6 +1691,18 @@ Whether to enable energy prediction.
 <tr><td align="center"><b>default</b></td><td>false</td>
 </tbody></table>
 
+### predict_mouth_opening
+
+Whether to enable mouth-opening prediction. When enabled, binarizers extract ground-truth mouth-opening curves with the estimator at [mouth_opening_estimator_ckpt](#mouth_opening_estimator_ckpt) (smoothed with [mouth_opening_smooth_width](#mouth_opening_smooth_width)) and normalize them with [mouth_opening_min](#mouth_opening_min) / [mouth_opening_max](#mouth_opening_max). Mouth opening counts as one of the variance parameters, so <a href="#variances_prediction_argstotal_repeat_bins">variances_prediction_args.total_repeat_bins</a> must be divisible by the resulting number of predicted variances.
+
+<table><tbody>
+<tr><td align="center"><b>visibility</b></td><td>variance</td>
+<tr><td align="center"><b>scope</b></td><td>nn, preprocessing, training, inference</td>
+<tr><td align="center"><b>customizability</b></td><td>recommended</td>
+<tr><td align="center"><b>type</b></td><td>bool</td>
+<tr><td align="center"><b>default</b></td><td>false</td>
+</tbody></table>
+
 ### predict_pitch
 
 Whether to enable pitch prediction.
@@ -1843,6 +1915,88 @@ Whether to use the ground truth as `x_start` in the shallow diffusion validation
 <tr><td align="center"><b>default</b></td><td>false</td>
 </tbody></table>
 
+### shift_mouth_opening_args
+
+Arguments for shift mouth-opening conditioning (SHMC). Only takes effect when [use_shift_mouth_opening_embed](#use_shift_mouth_opening_embed) is enabled.
+
+<table><tbody>
+<tr><td align="center"><b>type</b></td><td>dict[str, Any]</td>
+</tbody></table>
+
+### shift_mouth_opening_args.alpha_sigma
+
+Standard deviation of the zero-mean Gaussian (truncated to [-1, 1]) used to sample the per-sample shift strength alpha. A non-negative alpha shifts the mouth-opening curve toward the open end, a negative alpha toward the closed end; non-replaced samples always see alpha = 0.
+
+<table><tbody>
+<tr><td align="center"><b>visibility</b></td><td>acoustic</td>
+<tr><td align="center"><b>scope</b></td><td>training</td>
+<tr><td align="center"><b>customizability</b></td><td>normal</td>
+<tr><td align="center"><b>type</b></td><td>float</td>
+<tr><td align="center"><b>default</b></td><td>0.5</td>
+</tbody></table>
+
+### shift_mouth_opening_args.opec_max
+
+Upper bound of the mouth-opening curve values used when computing the shifted curve. The shifted curve is clamped to [opec_min, opec_max].
+
+<table><tbody>
+<tr><td align="center"><b>visibility</b></td><td>acoustic</td>
+<tr><td align="center"><b>scope</b></td><td>training</td>
+<tr><td align="center"><b>customizability</b></td><td>normal</td>
+<tr><td align="center"><b>type</b></td><td>float</td>
+<tr><td align="center"><b>default</b></td><td>0.8</td>
+</tbody></table>
+
+### shift_mouth_opening_args.opec_min
+
+Lower bound of the mouth-opening curve values used when computing the shifted curve. The shifted curve is clamped to [opec_min, opec_max].
+
+<table><tbody>
+<tr><td align="center"><b>visibility</b></td><td>acoustic</td>
+<tr><td align="center"><b>scope</b></td><td>training</td>
+<tr><td align="center"><b>customizability</b></td><td>normal</td>
+<tr><td align="center"><b>type</b></td><td>float</td>
+<tr><td align="center"><b>default</b></td><td>0.06</td>
+</tbody></table>
+
+### shift_mouth_opening_args.replacement_prob
+
+Probability of each sample in a batch being replaced by the teacher's output (conditioned on the shifted mouth-opening curve) instead of using its own ground-truth mel as the training target.
+
+<table><tbody>
+<tr><td align="center"><b>visibility</b></td><td>acoustic</td>
+<tr><td align="center"><b>scope</b></td><td>training</td>
+<tr><td align="center"><b>customizability</b></td><td>normal</td>
+<tr><td align="center"><b>type</b></td><td>float</td>
+<tr><td align="center"><b>default</b></td><td>0.25</td>
+<tr><td align="center"><b>constraints</b></td><td>Should be in the range [0, 1].</td>
+</tbody></table>
+
+### shift_mouth_opening_args.teacher_ckpt_path
+
+Path to the teacher checkpoint used for shift self-distillation. The teacher must be an acoustic model trained with [use_mouth_opening_embed](#use_mouth_opening_embed) enabled, and its `config.yaml` must sit next to the checkpoint file. At startup the student validates the teacher's mel features, data space, dictionaries and phoneme settings against its own, and the teacher runs frozen (no gradients).
+
+<table><tbody>
+<tr><td align="center"><b>visibility</b></td><td>acoustic</td>
+<tr><td align="center"><b>scope</b></td><td>training</td>
+<tr><td align="center"><b>customizability</b></td><td>recommended</td>
+<tr><td align="center"><b>type</b></td><td>str</td>
+<tr><td align="center"><b>default</b></td><td>''</td>
+<tr><td align="center"><b>constraints</b></td><td>Must point to an existing checkpoint file when <a href="#use_shift_mouth_opening_embed">use_shift_mouth_opening_embed</a> is enabled.</td>
+</tbody></table>
+
+### shift_mouth_opening_args.teacher_use_amp
+
+Whether to run the teacher forward pass under float16 autocast on CUDA devices. Has no effect on CPU or when the input mel is not on CUDA.
+
+<table><tbody>
+<tr><td align="center"><b>visibility</b></td><td>acoustic</td>
+<tr><td align="center"><b>scope</b></td><td>training</td>
+<tr><td align="center"><b>customizability</b></td><td>normal</td>
+<tr><td align="center"><b>type</b></td><td>bool</td>
+<tr><td align="center"><b>default</b></td><td>true</td>
+</tbody></table>
+
 ### sort_by_len
 
 Whether to apply the _sorting by similar length_ algorithm described in [sampler_frame_count_grid](#sampler_frame_count_grid). Turning off this option may slow down training because sorting by length can better utilize the computing resources.
@@ -1988,6 +2142,18 @@ Total number of DDPM steps. Only takes effect when [diffusion_type](#diffusion_t
 <tr><td align="center"><b>default</b></td><td>1000</td>
 </tbody></table>
 
+### use_acoustic_retake
+
+Whether to enable note-level acoustic retake (condition-level / soft inpainting) during training. When enabled, a fresh continuous retake mask is sampled at each training step: in keep regions the ground-truth mel is fed back as a condition (normalized with [spec_min](#spec_min) / [spec_max](#spec_max) and projected into hidden space) so the model learns to reproduce it, while in retake regions the model conditions only on the encoder output. The option is baked into the exported ONNX graph, so it cannot be toggled at inference time.
+
+<table><tbody>
+<tr><td align="center"><b>visibility</b></td><td>acoustic</td>
+<tr><td align="center"><b>scope</b></td><td>nn, training</td>
+<tr><td align="center"><b>customizability</b></td><td>normal</td>
+<tr><td align="center"><b>type</b></td><td>bool</td>
+<tr><td align="center"><b>default</b></td><td>false</td>
+</tbody></table>
+
 ### use_breathiness_embed
 
 Whether to accept and embed breathiness values into the model.
@@ -2098,6 +2264,19 @@ Whether to use Mixed LayerNorm with speaker-conditioned mixup in the acoustic en
 <tr><td align="center"><b>default</b></td><td>false</td>
 </tbody></table>
 
+### use_mouth_opening_embed
+
+Whether to accept and embed mouth-opening values into the acoustic model. When enabled, binarizers extract ground-truth mouth-opening curves with the estimator at [mouth_opening_estimator_ckpt](#mouth_opening_estimator_ckpt) (smoothed with [mouth_opening_smooth_width](#mouth_opening_smooth_width)), and the model takes `mouth_opening` as an additional variance input at inference. Mutually exclusive with [use_shift_mouth_opening_embed](#use_shift_mouth_opening_embed).
+
+<table><tbody>
+<tr><td align="center"><b>visibility</b></td><td>acoustic</td>
+<tr><td align="center"><b>scope</b></td><td>nn, preprocessing, training, inference</td>
+<tr><td align="center"><b>customizability</b></td><td>normal</td>
+<tr><td align="center"><b>type</b></td><td>bool</td>
+<tr><td align="center"><b>default</b></td><td>false</td>
+<tr><td align="center"><b>constraints</b></td><td>Mutually exclusive with <a href="#use_shift_mouth_opening_embed">use_shift_mouth_opening_embed</a>.</td>
+</tbody></table>
+
 ### use_pos_embed
 
 Whether to enable positional encoding in FastSpeech2 encoder. When [use_rope](#use_rope) is `false`, this key controls the additive input embedding (`SinusoidalPositionalEmbedding` when `rel_pos` is `false`, or `RelPositionalEncoding` when `rel_pos` is `true`). When `use_rope` is `true`, no additive embedding is created, but RoPE is only created if this key is also `true` — disabling it removes RoPE as well and leaves the encoder with no positional encoding at all. The additive embedding module itself is created based on [use_rope](#use_rope) and [rel_pos](#rel_pos) alone, regardless of this key, so toggling it never changes parameter shapes or the set of saved keys and never prevents checkpoint loading; it only selects whether the positional encoding is actually applied at run time (and, when `use_rope` is `true`, whether RoPE is created and applied in attention), which changes the behavior of both training and inference. Since an already trained model expects its trained positional encoding scheme, modifying it silently produces inconsistent or wrong outputs.
@@ -2132,6 +2311,19 @@ Whether to use shallow diffusion.
 <tr><td align="center"><b>customizability</b></td><td>recommended</td>
 <tr><td align="center"><b>type</b></td><td>bool</td>
 <tr><td align="center"><b>default</b></td><td>true</td>
+</tbody></table>
+
+### use_shift_mouth_opening_embed
+
+Whether to enable shift mouth-opening conditioning (SHMC) in the acoustic model. Instead of feeding the mouth-opening curve directly, training shifts the curve by a sampled strength alpha and distills from a teacher (see [shift_mouth_opening_args](#shift_mouth_opening_args)): with probability `replacement_prob` a sample's target mel is replaced by the teacher's output conditioned on the shifted curve, while non-replaced samples see alpha = 0 so the model does not learn to associate non-zero alpha with ground truth. Mutually exclusive with [use_mouth_opening_embed](#use_mouth_opening_embed).
+
+<table><tbody>
+<tr><td align="center"><b>visibility</b></td><td>acoustic</td>
+<tr><td align="center"><b>scope</b></td><td>nn, preprocessing, training, inference</td>
+<tr><td align="center"><b>customizability</b></td><td>normal</td>
+<tr><td align="center"><b>type</b></td><td>bool</td>
+<tr><td align="center"><b>default</b></td><td>false</td>
+<tr><td align="center"><b>constraints</b></td><td>Mutually exclusive with <a href="#use_mouth_opening_embed">use_mouth_opening_embed</a>; requires <a href="#shift_mouth_opening_argsteacher_ckpt_path">shift_mouth_opening_args.teacher_ckpt_path</a>.</td>
 </tbody></table>
 
 ### use_speed_embed
@@ -2319,6 +2511,31 @@ Minimum voicing value in dB used for normalization to [-1, 1]. Note that with [d
 <tr><td align="center"><b>customizability</b></td><td>recommended</td>
 <tr><td align="center"><b>type</b></td><td>float</td>
 <tr><td align="center"><b>default</b></td><td>-96.0</td>
+</tbody></table>
+
+### voicing_domain
+
+Domain in which voicing values are represented. `'db'` (default) keeps the logarithmic dB representation bounded by [voicing_db_min](#voicing_db_min) / [voicing_db_max](#voicing_db_max). `'mulaw'` applies mu-law compression (see [voicing_mu](#voicing_mu)) and maps the result back into the dB-like range for API compatibility, in which case the upper normalization bound becomes 0 instead of [voicing_db_max](#voicing_db_max). `'amplitude'` uses the raw linear amplitude. Non-default domains are written into the exported `dsconfig` (`voicing_domain` and `voicing_mu`) so inference frontends can enable the corresponding domain conversion automatically.
+
+<table><tbody>
+<tr><td align="center"><b>visibility</b></td><td>acoustic, variance</td>
+<tr><td align="center"><b>scope</b></td><td>preprocessing, training, inference</td>
+<tr><td align="center"><b>customizability</b></td><td>normal</td>
+<tr><td align="center"><b>type</b></td><td>str</td>
+<tr><td align="center"><b>default</b></td><td>'db'</td>
+<tr><td align="center"><b>constraints</b></td><td>Choose from 'db', 'amplitude', 'mulaw'.</td>
+</tbody></table>
+
+### voicing_mu
+
+Mu parameter of the mu-law compression applied to voicing values. Only takes effect when [voicing_domain](#voicing_domain) is `'mulaw'`. Written into the exported `dsconfig` together with `voicing_domain` so inference frontends can invert the compression.
+
+<table><tbody>
+<tr><td align="center"><b>visibility</b></td><td>acoustic, variance</td>
+<tr><td align="center"><b>scope</b></td><td>preprocessing, training, inference</td>
+<tr><td align="center"><b>customizability</b></td><td>normal</td>
+<tr><td align="center"><b>type</b></td><td>float</td>
+<tr><td align="center"><b>default</b></td><td>255.0</td>
 </tbody></table>
 
 ### voicing_smooth_width
