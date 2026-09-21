@@ -3,6 +3,9 @@ base_config:
 
 task_cls: training.variance_task.VarianceTask
 
+# Enable Triton-fused Linear+SoftSignGLU kernels for LYNXNet2 backbones.
+use_fused_kernels: false
+
 dictionaries: {}
 extra_phonemes: []
 merged_phoneme_groups: []
@@ -15,7 +18,6 @@ win_size: 2048           # FFT size.
 midi_smooth_width: 0.06  # in seconds
 
 binarization_args:
-  shuffle: true
   num_workers: 0
   prefer_ds: false
 
@@ -38,6 +40,7 @@ predict_mouth_opening: false
 enc_ffn_kernel_size: 3
 use_rope: true
 rope_interleaved: false
+rope_theta: 10000
 use_stretch_embed: false
 use_variance_scaling: true
 rel_pos: true
@@ -113,6 +116,7 @@ lambda_pitch_loss: 1.0
 lambda_var_loss: 1.0
 
 diffusion_type: reflow  # ddpm
+use_dual_timestep: true
 time_scale_factor: 1000
 schedule_type: 'linear'
 K_step: 1000

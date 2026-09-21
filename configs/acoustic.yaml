@@ -3,6 +3,9 @@ base_config:
 
 task_cls: training.acoustic_task.AcousticTask
 
+# Enable Triton-fused Linear+SoftSignGLU kernels for LYNXNet2 backbones.
+use_fused_kernels: false
+
 dictionaries: {}
 extra_phonemes: []
 merged_phoneme_groups: []
@@ -19,7 +22,6 @@ fmin: 40
 fmax: 16000
 
 binarization_args:
-  shuffle: true
   num_workers: 0
 augmentation_args:
   random_pitch_shifting:
@@ -75,12 +77,14 @@ shift_mouth_opening_args:
   teacher_use_amp: true
 
 diffusion_type: reflow
+use_dual_timestep: true
 time_scale_factor: 1000
 timesteps: 1000
 max_beta: 0.02
 enc_ffn_kernel_size: 3
 use_rope: true
 rope_interleaved: false
+rope_theta: 10000
 use_stretch_embed: true
 use_variance_scaling: true
 rel_pos: true

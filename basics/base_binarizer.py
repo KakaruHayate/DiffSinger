@@ -1,7 +1,6 @@
 import json
 import pathlib
 import pickle
-import random
 import shutil
 import warnings
 from copy import deepcopy
@@ -121,15 +120,6 @@ class BaseBinarizer:
             if prefix in self.item_names:
                 valid_item_names[prefix] = 1
                 prefixes.pop(prefix)
-        # Add prefixes that exactly matches item name without speaker id to test set
-        for prefix in deepcopy(prefixes):
-            matched = False
-            for name in self.item_names:
-                if name.split(':')[-1] == prefix:
-                    valid_item_names[name] = 1
-                    matched = True
-            if matched:
-                prefixes.pop(prefix)
         # Add names with one of the remaining prefixes to test set
         for prefix in deepcopy(prefixes):
             matched = False
@@ -139,15 +129,6 @@ class BaseBinarizer:
                     matched = True
             if matched:
                 prefixes.pop(prefix)
-        for prefix in deepcopy(prefixes):
-            matched = False
-            for name in self.item_names:
-                if name.split(':')[-1].startswith(prefix):
-                    valid_item_names[name] = 1
-                    matched = True
-            if matched:
-                prefixes.pop(prefix)
-
         if len(prefixes) != 0:
             warnings.warn(
                 f'The following rules in test_prefixes have no matching names in the dataset: {", ".join(prefixes.keys())}',
@@ -194,9 +175,6 @@ class BaseBinarizer:
             )
         self.item_names = sorted(list(self.items.keys()))
         self._train_item_names, self._valid_item_names = self.split_train_valid_set(test_prefixes)
-
-        if self.binarization_args['shuffle']:
-            random.shuffle(self.item_names)
 
         self.binary_data_dir.mkdir(parents=True, exist_ok=True)
 

@@ -2,7 +2,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from modules.commons.common_layers import SinusoidalPosEmb, SwiGLU, ATanGLU, Transpose, AdamWLinear
+from modules.commons.common_layers import (
+    SinusoidalPosEmb, SwiGLU, ATanGLU, SoftSignGLU, Transpose, AdamWLinear
+)
+from modules.commons.common_layers import MixedPrecisionLayerNorm as LayerNorm
 from utils.hparams import hparams
 
 
@@ -14,6 +17,8 @@ class LYNXNet2Block(nn.Module):
             _glu = SwiGLU()
         elif glu_type == 'atanglu':
             _glu = ATanGLU()
+        elif glu_type == 'softsign_glu':
+            _glu = SoftSignGLU()
         else:
             raise ValueError(f'{glu_type} is not a valid activation')
         if float(dropout) > 0.:
@@ -21,7 +26,7 @@ class LYNXNet2Block(nn.Module):
         else:
             _dropout = nn.Identity()
         self.net = nn.Sequential(
-            nn.LayerNorm(dim),
+            LayerNorm(dim),
             Transpose((1, 2)),
             nn.Conv1d(dim, dim, kernel_size=kernel_size, padding=kernel_size // 2, groups=dim),
             Transpose((1, 2)),
@@ -77,7 +82,7 @@ class LYNXNet2(nn.Module):
         nn.init.kaiming_normal_(self.conditioner_projection.weight)
         nn.init.zeros_(self.output_projection.weight)
 
-    def forward(self, spec, diffusion_step, cond):
+    def forward(self, spec, diffusion_step, cond, diffusion_step_2=None, mask=None):
         """
         :param spec: [B, F, M, T]
         :param diffusion_step: [B, 1]
@@ -95,7 +100,18 @@ class LYNXNet2(nn.Module):
             x = x + self.conditioner_projection(cond).transpose(1, 2)
         else:
             x = x + self.conditioner_projection(cond.transpose(1, 2))
-        x = x + self.diffusion_embedding(diffusion_step).unsqueeze(1)
+        
+        if mask is not None:
+            step = torch.cat((diffusion_step, diffusion_step_2), dim=0)
+            step = self.diffusion_embedding(step)
+            step, step_2 = torch.split(step, x.shape[0], dim=0) #[B, 1, C]
+            mask = mask.to(x).unsqueeze(-1) # [B, T, 1]
+            x = x + step + (step_2 - step) * mask
+        else:
+            step = self.diffusion_embedding(diffusion_step)
+            if step.dim() == 2:
+                step = step.unsqueeze(1)
+            x = x + step
 
         for layer in self.residual_layers:
             x = layer(x)

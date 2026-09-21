@@ -759,7 +759,7 @@ class DiffSingerVarianceExporter(BaseExporter):
         assert check, 'Simplified ONNX model could not be validated'
 
         onnx_helper.model_override_io_shapes(
-            pitch_predictor, output_shapes={'pitch_pred': (1, 'n_frames')}
+            pitch_predictor, output_shapes={'x_pred': (1, 'n_frames')}
         )
         print(f'Running ONNX Simplifier #1 on {self.pitch_predictor_class_name}...')
         pitch_predictor, check = onnxsim.simplify(pitch_predictor, include_subgraph=True)
@@ -814,8 +814,7 @@ class DiffSingerVarianceExporter(BaseExporter):
                 else (1, len(self.model.variance_prediction_list), 'n_frames')
             }
         )
-        print(f'Running ONNX Simplifier #1 on'
-              f' {self.multi_var_predictor_class_name}...')
+        print(f'Running ONNX Simplifier #1 on {self.multi_var_predictor_class_name}...')
         var_diffusion, check = onnxsim.simplify(var_diffusion, include_subgraph=True)
         assert check, 'Simplified ONNX model could not be validated'
         onnx_helper.graph_fold_back_to_squeeze(var_diffusion.graph)

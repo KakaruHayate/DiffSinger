@@ -175,6 +175,47 @@ class ATanGLU(nn.Module):
             return out * torch.atan(gate)
 
 
+class SoftSignGLUFunction(torch.autograd.Function):
+    """ATanGLUFunction-style memory trick for SoftSignGLU.
+
+    softsign'(x) = 1/(1+|x|)^2 = (1-|softsign(x)|)^2, so both partial
+    derivatives of y = out * softsign(gate) are precomputable in forward:
+      dy/dout = softsign(gate)
+      dy/dgate = out * (1-|softsign(gate)|)^2
+    Saves 2 tensors (vs 3 for naive autograd) and backward is two pure
+    multiplies with no softsign recompute.
+    """
+    @staticmethod
+    def forward(ctx, out, gate):
+        ss_gate = torch.nn.functional.softsign(gate)
+        decay_out = out * (1.0 - ss_gate.abs()).square()
+        ctx.save_for_backward(ss_gate, decay_out)
+        return out * ss_gate
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        ss_gate, decay_out = ctx.saved_tensors
+        return grad_output * ss_gate, grad_output * decay_out
+
+
+class SoftSignGLU(nn.Module):
+    """Gated Linear Unit with SoftSign gate: out * softsign(gate).
+
+    More numerically stable than ATanGLU (no approximation needed in
+    Triton kernels) while providing similar gating behavior.
+    """
+    def __init__(self, dim=-1):
+        super().__init__()
+        self.dim = dim
+
+    def forward(self, x):
+        out, gate = torch.split(x, x.size(self.dim) // 2, dim=self.dim)
+        if self.training:
+            return SoftSignGLUFunction.apply(out, gate)
+        else:
+            return out * torch.nn.functional.softsign(gate)
+
+
 class AdamWConv1d(torch.nn.Conv1d):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -246,6 +287,22 @@ class Mixed_LayerNorm(nn.Module):
         return mixed_gammas * x + mixed_betas
 
 
+class MixedPrecisionLayerNorm(nn.LayerNorm):
+    """LayerNorm that keeps fp16/bf16 activations under AMP autocast"""
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        with torch.autocast(device_type=x.device.type, enabled=False):
+            weight = self.weight
+            bias = self.bias
+            if weight is not None and weight.dtype != x.dtype:
+                weight = weight.to(x.dtype)
+            if bias is not None and bias.dtype != x.dtype:
+                bias = bias.to(x.dtype)
+            return F.layer_norm(
+                x, self.normalized_shape, weight, bias, self.eps
+            )
+            
+            
 class TransformerFFNLayer(nn.Module):
     def __init__(self, hidden_size, filter_size, kernel_size=1, dropout=0., act='gelu'):
         super().__init__()
@@ -422,6 +479,6 @@ class SinusoidalPosEmb(nn.Module):
         half_dim = self.dim // 2
         emb = math.log(10000) / (half_dim - 1)
         emb = torch.exp(torch.arange(half_dim, device=device) * -emb)
-        emb = x.unsqueeze(-1) * emb.unsqueeze(0)
+        emb = x.unsqueeze(-1) * emb
         emb = torch.cat((emb.sin(), emb.cos()), dim=-1)
         return emb

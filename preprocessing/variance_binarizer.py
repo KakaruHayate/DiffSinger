@@ -115,7 +115,7 @@ class VarianceBinarizer(BaseBinarizer):
             if not isinstance(ds, list):
                 ds = [ds]
             self.cached_ds[cache_key] = ds
-            ds = ds[idx]
+            ds = ds[0] if cache_key == item_name_with_idx else ds[idx]
         return ds.get(attr)
 
     def load_meta_data(self, raw_data_dir: pathlib.Path, ds_id, spk, lang):
@@ -125,11 +125,12 @@ class VarianceBinarizer(BaseBinarizer):
             for utterance_label in csv.DictReader(f):
                 utterance_label: dict
                 item_name = utterance_label['name']
-                item_idx = int(item_name.rsplit(DS_INDEX_SEP, maxsplit=1)[-1]) if DS_INDEX_SEP in item_name else 0
+                item_base_name, *item_seg_idx = item_name.rsplit(DS_INDEX_SEP, maxsplit=1)
+                item_idx = int(item_seg_idx[0]) if item_seg_idx else 0
 
                 def require(attr, optional=False):
                     if self.prefer_ds:
-                        value = self.load_attr_from_ds(ds_id, item_name, attr, item_idx)
+                        value = self.load_attr_from_ds(ds_id, item_base_name, attr, item_idx)
                     else:
                         value = None
                     if value is None:
@@ -164,7 +165,7 @@ class VarianceBinarizer(BaseBinarizer):
                             if self.phoneme_dictionary.is_cross_lingual(p if '/' in p else f'{lang}/{p}')
                             else 0
                         )
-                        for p in utterance_label['ph_seq'].split()
+                        for p in require('ph_seq').split()
                     ],
                     'ph_seq': self.phoneme_dictionary.encode(require('ph_seq'), lang=lang),
                     'ph_dur': [float(x) for x in require('ph_dur').split()],
@@ -283,7 +284,6 @@ class VarianceBinarizer(BaseBinarizer):
         ds_id = int(ds_id)
         ds_seg_idx = meta_data['ds_idx']
         seconds = sum(meta_data['ph_dur'])
-        length = round(seconds / self.timestep)
         T_ph = len(meta_data['ph_seq'])
         processed_input = {
             'name': item_name,
@@ -291,7 +291,6 @@ class VarianceBinarizer(BaseBinarizer):
             'spk_id': meta_data['spk_id'],
             'spk_name': meta_data['spk_name'],
             'seconds': seconds,
-            'length': length,
             'languages': np.array(meta_data['lang_seq'], dtype=np.int64),
             'tokens': np.array(meta_data['ph_seq'], dtype=np.int64),
             'ph_text': meta_data['ph_text'],
@@ -300,7 +299,9 @@ class VarianceBinarizer(BaseBinarizer):
         ph_dur_sec = torch.FloatTensor(meta_data['ph_dur']).to(self.device)
         ph_acc = torch.round(torch.cumsum(ph_dur_sec, dim=0) / self.timestep + 0.5).long()
         ph_dur = torch.diff(ph_acc, dim=0, prepend=torch.LongTensor([0]).to(self.device))
+        length = int(ph_acc[-1])
         processed_input['ph_dur'] = ph_dur.cpu().numpy()
+        processed_input['length'] = length
 
         mel2ph = get_mel2ph_torch(
             self.lr, ph_dur_sec, length, self.timestep, device=self.device
@@ -322,14 +323,21 @@ class VarianceBinarizer(BaseBinarizer):
         if self.prefer_ds:
             f0_seq = self.load_attr_from_ds(ds_id, name, 'f0_seq', idx=ds_seg_idx)
             if f0_seq is not None:
+                f0_timestep = float(self.load_attr_from_ds(ds_id, name, 'f0_timestep', idx=ds_seg_idx))
+                # Interpolate unvoiced parts before resampling.
+                f0_points, uv_points = interp_f0(np.array(f0_seq.split(), np.float32))
                 f0 = resample_align_curve(
-                    np.array(f0_seq.split(), np.float32),
-                    original_timestep=float(self.load_attr_from_ds(ds_id, name, 'f0_timestep', idx=ds_seg_idx)),
+                    f0_points,
+                    original_timestep=f0_timestep,
                     target_timestep=self.timestep,
                     align_length=length
                 )
-                uv = f0 == 0
-                f0, _ = interp_f0(f0, uv)
+                uv = resample_align_curve(
+                    uv_points.astype(np.float32),
+                    original_timestep=f0_timestep,
+                    target_timestep=self.timestep,
+                    align_length=length
+                ) > 0.5
         if f0 is None:
             f0, uv = pitch_extractor.get_pitch(
                 waveform, samplerate=hparams['audio_sample_rate'], length=length,
@@ -349,6 +357,12 @@ class VarianceBinarizer(BaseBinarizer):
             ph_midi = pitch.new_zeros(T_ph + 1).scatter_add(
                 0, mel2ph, pitch / mel2dur
             )[1:]
+            # Phones collapsed to 0 frames receive no scatter contribution;
+            # fall back to the pitch value at their position on the time axis.
+            zero_dur = ph_dur <= 0
+            if zero_dur.any():
+                bound = torch.cat([ph_acc.new_zeros(1), ph_acc[:-1]]).clamp(min=0, max=length - 1)
+                ph_midi[zero_dur] = pitch[bound[zero_dur]]
             processed_input['midi'] = ph_midi.round().long().clamp(min=0, max=127).cpu().numpy()
 
         if hparams['predict_pitch']:
