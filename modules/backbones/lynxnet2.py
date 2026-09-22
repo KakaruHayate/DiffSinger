@@ -3,7 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from modules.commons.common_layers import (
-    SinusoidalPosEmb, SwiGLU, ATanGLU, SoftSignGLU, Transpose, AdamWLinear
+    ATanGLU,
+    AdamWConv1d,
+    AdamWLinear,
+    SinusoidalPosEmb,
+    SoftSignGLU,
+    SwiGLU,
+    Transpose,
 )
 from modules.commons.common_layers import MixedPrecisionLayerNorm as LayerNorm
 from utils.hparams import hparams
@@ -28,7 +34,7 @@ class LYNXNet2Block(nn.Module):
         self.net = nn.Sequential(
             LayerNorm(dim),
             Transpose((1, 2)),
-            nn.Conv1d(dim, dim, kernel_size=kernel_size, padding=kernel_size // 2, groups=dim),
+            AdamWConv1d(dim, dim, kernel_size=kernel_size, padding=kernel_size // 2, groups=dim),
             Transpose((1, 2)),
             nn.Linear(dim, inner_dim * 2),
             _glu,
@@ -100,7 +106,7 @@ class LYNXNet2(nn.Module):
             x = x + self.conditioner_projection(cond).transpose(1, 2)
         else:
             x = x + self.conditioner_projection(cond.transpose(1, 2))
-        
+
         if mask is not None:
             step = torch.cat((diffusion_step, diffusion_step_2), dim=0)
             step = self.diffusion_embedding(step)

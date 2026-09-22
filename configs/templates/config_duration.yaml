@@ -66,9 +66,19 @@ tension_logit_max: 10.0
 enc_ffn_kernel_size: 3
 use_rope: true
 rope_interleaved: false
+rope_theta: 10000
+use_laurel_block: false
 use_stretch_embed: false
 use_variance_scaling: true
 hidden_size: 384
+# SDP
+use_sdp: false
+sdp_ratio: 0.2
+sdp_n_chans: 192
+lambda_sdp_loss: 0.005
+lambda_sdp_reg_loss: 0.1
+sdp_reg_warmup_steps: 16000
+
 dur_prediction_args:
   arch: resnet
   hidden_size: 256
@@ -85,11 +95,14 @@ use_melody_encoder: true
 melody_encoder_args:
   hidden_size: 128
   enc_layers: 4
+  rope_theta: 10000
+  use_laurel_block: false
 use_glide_embed: false
 glide_types: [up, down]
 glide_embed_scale: 11.313708498984760  # sqrt(128)
 
 diffusion_type: reflow
+use_dual_timestep: true
 
 pitch_prediction_args:
   pitd_norm_min: -8.0

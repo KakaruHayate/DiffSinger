@@ -252,6 +252,8 @@ class Mixed_LayerNorm(nn.Module):
         super().__init__()
         self.channels = channels
         self.eps = eps
+        # If false, skip the speaker-shuffle mixture while keeping the
+        # conditional-affine structure (default).
         self.shuffle_speakers = shuffle_speakers
 
         self.beta_distribution = torch.distributions.Beta(
@@ -414,10 +416,27 @@ class MultiheadSelfAttentionWithRoPE(nn.Module):
         return output
 
 
+class LaurelBlock(nn.Module):
+    """Laurel residual connection block."""
+    def __init__(self, dim, bottleneck_dim=64):
+        super().__init__()
+        self.down_proj = AdamWLinear(dim, bottleneck_dim, bias=False)
+        self.up_proj = AdamWLinear(bottleneck_dim, dim, bias=False)
+        self.norm = LayerNorm(dim)
+
+    def forward(self, x):
+        residual = x
+        x = self.down_proj(x)
+        x = self.up_proj(x)
+        x = self.norm(x)
+        return residual + x
+
+
 class EncSALayer(nn.Module):
     def __init__(self, c, num_heads, dropout, attention_dropout=0.1,
                  relu_dropout=0.1, kernel_size=9, act='gelu', rotary_embed=None,
-                 layer_idx=None, mix_ln_layer=None, mixln_shuffle_speakers=False
+                 layer_idx=None, mix_ln_layer=None, use_laurel_block=False,
+                 mixln_shuffle_speakers=False
                  ):
         super().__init__()
         self.dropout = dropout
@@ -447,6 +466,10 @@ class EncSALayer(nn.Module):
             c, 4 * c, kernel_size=kernel_size, dropout=relu_dropout, act=act
         )
 
+        self.use_laurel_block = use_laurel_block
+        if self.use_laurel_block:
+            self.laurel = LaurelBlock(c)
+
     def forward(self, x, encoder_padding_mask=None, cond=None, **kwargs):
         layer_norm_training = kwargs.get('layer_norm_training', None)
         if layer_norm_training is not None:
@@ -461,6 +484,10 @@ class EncSALayer(nn.Module):
         x = F.dropout(x, self.dropout, training=self.training)
         x = residual + x
         x = x * (1 - encoder_padding_mask.float())[..., None]
+
+        if self.use_laurel_block:
+            x = self.laurel(x) * 0.707106781187 # sqrt(1/2)
+            x = x * (1 - encoder_padding_mask.float())[..., None]
 
         residual = x
         if self.use_mix_ln:

@@ -84,7 +84,7 @@ class WaveNet(nn.Module):
         x = self.input_projection(x)  # [B, C, T]
 
         x = F.relu(x)
-           
+
         if mask is not None:
             step = torch.cat((diffusion_step, diffusion_step_2), dim=0)
             step = self.diffusion_embedding(step)
@@ -97,7 +97,7 @@ class WaveNet(nn.Module):
             step = self.mlp(step)
             if step.dim() == 2:
                 step = step.unsqueeze(1)
-            
+
         skip = []
         for layer in self.residual_layers:
             x, skip_connection = layer(x, cond, step)

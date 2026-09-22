@@ -58,8 +58,8 @@ class FastSpeech2Acoustic(nn.Module):
             dropout=hparams['dropout'], num_heads=hparams['num_heads'],
             use_pos_embed=hparams['use_pos_embed'], rel_pos=hparams.get('rel_pos', False),
             use_rope=hparams.get('use_rope', False), rope_interleaved=hparams.get('rope_interleaved', True),
-            rope_theta=hparams.get('rope_theta', 10000),
-            mix_ln_layer=self.mix_ln_layer,
+            mix_ln_layer=self.mix_ln_layer, rope_theta=hparams.get('rope_theta', 10000),
+            use_laurel_block=hparams.get('use_laurel_block', False),
             mixln_shuffle_speakers=hparams.get('mixln_shuffle_speakers', False),
         )
 

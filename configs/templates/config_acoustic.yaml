@@ -45,6 +45,7 @@ num_spk: 1
 
 use_mix_ln: false
 mix_ln_layer: [0, 2]
+# If true, Mixed_LayerNorm shuffles/mixes speakers within a batch during training.
 mixln_shuffle_speakers: false
 
 # NOTICE: before enabling variance embeddings, please read the docs at
@@ -79,6 +80,7 @@ enc_ffn_kernel_size: 3
 use_rope: true
 rope_interleaved: false
 rope_theta: 10000
+use_laurel_block: false
 use_stretch_embed: true
 use_variance_scaling: true
 use_shallow_diffusion: true
@@ -107,6 +109,11 @@ shallow_diffusion_args:
     dropout_rate: 0.1
   aux_decoder_grad: 0.1
 lambda_aux_mel_loss: 0.2
+
+# Explorative Modeling is currently available for full-depth Rectified Flow.
+# Set use_shallow_diffusion=false before raising xm_best_of_k above 1.
+xm_best_of_k: 1
+xm_chunk_size: 1
 
 optimizer_args:
   optimizer_cls: modules.optimizer.muon.Muon_AdamW

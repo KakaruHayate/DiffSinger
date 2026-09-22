@@ -139,7 +139,7 @@ def get_breathiness(
 def get_voicing(
         waveform: Union[np.ndarray, DecomposedWaveform],
         samplerate, f0, length,
-        *, hop_size=None, fft_size=None, win_size=None, 
+        *, hop_size=None, fft_size=None, win_size=None,
         domain='db', mu=255.0
 ):
     """
@@ -163,7 +163,7 @@ def get_voicing(
     waveform_sp = waveform.harmonic()
     voicing = get_energy_librosa(
         waveform_sp, length=length,
-        hop_size=waveform.hop_size, win_size=waveform.win_size, 
+        hop_size=waveform.hop_size, win_size=waveform.win_size,
         domain=domain, mu=mu
     )
     return voicing

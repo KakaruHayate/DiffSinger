@@ -56,6 +56,7 @@ use_spk_id: false
 num_spk: 1
 use_mix_ln: false
 mix_ln_layer: [0, 2]
+# If true, Mixed_LayerNorm shuffles/mixes speakers within a batch during training.
 mixln_shuffle_speakers: false
 use_energy_embed: false
 use_breathiness_embed: false
@@ -73,6 +74,7 @@ enc_ffn_kernel_size: 3
 use_rope: true
 rope_interleaved: false
 rope_theta: 10000
+use_laurel_block: false
 use_stretch_embed: true
 use_variance_scaling: true
 rel_pos: true
@@ -92,6 +94,12 @@ backbone_args:
 main_loss_type: l2
 main_loss_log_norm: false
 schedule_type: 'linear'
+
+# Explorative Modeling for full-depth Rectified Flow training.
+# K=1 preserves the standard training objective. Larger K trades additional
+# no-gradient forward passes for candidate exploration without K-fold VRAM.
+xm_best_of_k: 1
+xm_chunk_size: 1
 
 # shallow diffusion
 use_shallow_diffusion: true
