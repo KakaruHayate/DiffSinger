@@ -591,7 +591,7 @@ Dropout rate in duration predictor. Like [dropout](#dropout), modifying it does 
 
 ### dur_prediction_args.head_args
 
-Extra arguments for the `'attn_gru'` duration head. Ignored when `arch` is `'fs2'` or `'resnet'`. The head replaces the convolutional stack with `num_blocks` pre-norm blocks of local relative attention (`num_heads` heads, window radius `radius`) plus a feed-forward of expansion `ffn_mult` and activation `ffn_act`, followed by a `gru_layers`-layer GRU. `hidden_size` is reused as the head width. All head parameters are dense 2-D matrices or gains, so they are assigned to the AdamW group of the optimizer rather than to the matrix-space (Muon) group; see [optimizer_args.optimizer_cls](#optimizer_argsoptimizer_cls).
+Extra arguments for the `'attn_gru'` duration head. Ignored when `arch` is `'fs2'` or `'resnet'`. The head replaces the convolutional stack with `num_blocks` pre-norm blocks of local relative attention (`num_heads` heads, window radius `radius`) plus a feed-forward of expansion `ffn_mult` and activation `ffn_act`, followed by a `gru_layers`-layer GRU. `hidden_size` is reused as the head width. All head parameters are dense 2-D matrices or 1-D gains: the linear projections and the GRU recurrent matrices are assigned to the matrix-space (Muon) group, while gains, biases and embeddings stay on the AdamW group; see [optimizer_args.optimizer_cls](#optimizer_argsoptimizer_cls).
 
 <table><tbody>
 <tr><td align="center"><b>visibility</b></td><td>variance</td>

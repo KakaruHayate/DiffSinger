@@ -141,8 +141,12 @@ lambda_pitch_loss: 1.0
 lambda_var_loss: 1.0
 
 optimizer_args:
-  optimizer_cls: torch.optim.AdamW
+  optimizer_cls: modules.optimizer.muon.Muon_AdamW
   lr: 0.0006
+  muon_args:
+    weight_decay: 0.1
+  adamw_args:
+    weight_decay: 0.0
 lr_scheduler_args:
   scheduler_cls: torch.optim.lr_scheduler.StepLR
   step_size: 5000
