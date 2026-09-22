@@ -60,7 +60,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from modules.commons.common_layers import AdamWLinear
 from modules.fastspeech.grouping import group_mask, group_position_ids
 
 __all__ = ["LocalRelativeAttention", "FFN", "Block", "DurationHeadV2"]

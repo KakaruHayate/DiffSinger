@@ -73,7 +73,7 @@ use_stretch_embed: false
 use_variance_scaling: true
 hidden_size: 384
 dur_prediction_args:
-  arch: resnet
+  arch: attn_gru
   hidden_size: 256
   dropout: 0.1
   num_layers: 5
@@ -83,11 +83,11 @@ dur_prediction_args:
   lambda_pdur_loss: 0.3
   lambda_wdur_loss: 1.0
   lambda_sdur_loss: 3.0
-  lambda_alloc_loss: 0.0
+  lambda_alloc_loss: 1.0
   # Distribute each group's (note/syllable) frame budget instead of predicting
   # absolute durations. Consumers of the exported model must then accept the
   # word_div and word_dur inputs of the dur model; see docs.
-  use_allocation: false
+  use_allocation: true
   # Extra arguments for `arch: attn_gru` (ignored by the convolutional archs).
   head_args:
     num_blocks: 4

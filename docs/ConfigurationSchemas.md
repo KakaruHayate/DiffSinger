@@ -573,7 +573,7 @@ Architecture of duration predictor. `'fs2'` uses the original FastSpeech2 durati
 <tr><td align="center"><b>scope</b></td><td>nn</td>
 <tr><td align="center"><b>customizability</b></td><td>normal</td>
 <tr><td align="center"><b>type</b></td><td>str</td>
-<tr><td align="center"><b>default</b></td><td>resnet</td>
+<tr><td align="center"><b>default</b></td><td>attn_gru</td>
 <tr><td align="center"><b>constraints</b></td><td>Choose from 'fs2', 'resnet', 'attn_gru'.</td>
 </tbody></table>
 
@@ -634,7 +634,7 @@ Coefficient of the group allocation loss when calculating joint duration loss. T
 <tr><td align="center"><b>scope</b></td><td>training</td>
 <tr><td align="center"><b>customizability</b></td><td>normal</td>
 <tr><td align="center"><b>type</b></td><td>float</td>
-<tr><td align="center"><b>default</b></td><td>0.0</td>
+<tr><td align="center"><b>default</b></td><td>1.0</td>
 </tbody></table>
 
 ### dur_prediction_args.lambda_pdur_loss
@@ -723,7 +723,7 @@ Predict how each group's (a note or syllable) frame budget is split, instead of 
 <tr><td align="center"><b>scope</b></td><td>nn</td>
 <tr><td align="center"><b>customizability</b></td><td>normal</td>
 <tr><td align="center"><b>type</b></td><td>bool</td>
-<tr><td align="center"><b>default</b></td><td>false</td>
+<tr><td align="center"><b>default</b></td><td>true</td>
 </tbody></table>
 
 ### enc_ffn_kernel_size
