@@ -1,7 +1,10 @@
+import math
+
 import torch
 import torchmetrics
 from torch import Tensor
 
+from modules.fastspeech.grouping import group_distribution
 from modules.fastspeech.tts_modules import RhythmRegulator
 
 
@@ -95,3 +98,62 @@ class PhonemeDurationAccuracy(torchmetrics.Metric):
 
     def compute(self) -> Tensor:
         return self.accurate / self.total
+
+
+class DurationJSDivergence(torchmetrics.Metric):
+    """Jensen-Shannon divergence between predicted and target duration splits.
+
+    The durations of the phones inside each group (a note or syllable) are
+    normalized into a distribution, so the metric only measures how the group's
+    frame budget is split and is insensitive to the total length. The prediction
+    is first put on the target's scale, which keeps the metric comparable between
+    runs whose absolute predictions differ.
+    """
+
+    def __init__(self, eps=1e-8, **kwargs):
+        super().__init__(**kwargs)
+        self.eps = eps
+        self.add_state('divergence', default=torch.tensor(0.), dist_reduce_fx='sum')
+        self.add_state('groups', default=torch.tensor(0, dtype=torch.int), dist_reduce_fx='sum')
+
+    def update(self, pdur_pred: Tensor, pdur_target: Tensor, ph2word: Tensor, mask=None) -> None:
+        """
+
+        :param pdur_pred: predicted ph_dur
+        :param pdur_target: reference ph_dur
+        :param ph2word: word division sequence
+        :param mask: valid or non-padding mask
+        """
+        linguistic_checks(pdur_pred, pdur_target, ph2word, mask=mask)
+
+        if mask is None:
+            mask = pdur_pred.new_ones(pdur_pred.shape, dtype=torch.bool)
+        shape = pdur_pred.shape[0], ph2word.max() + 1
+        wdur_target = pdur_target.new_zeros(*shape).scatter_add(
+            1, ph2word, pdur_target
+        )[:, 1:]  # [B, T_ph] => [B, T_w]
+        wdur_pred = pdur_pred.new_zeros(*shape).scatter_add(
+            1, ph2word, pdur_pred * mask
+        )[:, 1:]  # [B, T_ph] => [B, T_w]
+        # rescale the prediction onto the target scale without rounding, so the
+        # divergence is measured on the same budget
+        alpha = wdur_target / wdur_pred.clamp_min(1e-8)
+        pdur_pred = pdur_pred * alpha.gather(1, ph2word.clamp(min=1) - 1)
+
+        prob_pred = group_distribution(pdur_pred, ph2word, mask)
+        prob_target = group_distribution(pdur_target, ph2word, mask)
+        mixture = 0.5 * (prob_pred + prob_target)
+
+        def kl_divergence(p, q):
+            log_p = p.clamp_min(self.eps).log()
+            log_q = q.clamp_min(self.eps).log()
+            return (p * (log_p - log_q) * mask).sum()
+
+        js = 0.5 * kl_divergence(prob_pred, mixture) + 0.5 * kl_divergence(prob_target, mixture)
+        js = js / math.log(2)  # normalize to [0, 1]
+
+        self.divergence += js
+        self.groups += (wdur_target > 0).sum()
+
+    def compute(self) -> Tensor:
+        return self.divergence / self.groups.clamp_min(1)

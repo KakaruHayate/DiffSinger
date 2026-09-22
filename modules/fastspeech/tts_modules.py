@@ -6,7 +6,8 @@ from torch.nn import functional as F
 from modules.commons.rotary_embedding_torch import RotaryEmbedding
 from modules.commons.common_layers import SinusoidalPositionalEmbedding, EncSALayer, AdamWLinear
 from modules.commons.espnet_positional_embedding import RelPositionalEncoding
-from modules.sdp.sdp import StochasticDurationPredictor
+from modules.fastspeech.dur_head import DurationHeadV2
+from modules.fastspeech.grouping import allocate_counts, group_log_prob, group_mask
 DEFAULT_MAX_SOURCE_POSITIONS = 2000
 DEFAULT_MAX_TARGET_POSITIONS = 2000
 
@@ -67,7 +68,7 @@ class DurationPredictor(torch.nn.Module):
 
     def __init__(self, in_dims, n_layers=2, n_chans=384, kernel_size=3,
                  dropout_rate=0.1, offset=1.0, dur_loss_type='mse', arch='resnet',
-                 use_sdp=False, sdp_ratio=0.2, sdp_n_chans=192, gin_channels=0):
+                 head_args=None, use_allocation=False):
         """Initialize duration predictor module.
         Args:
             in_dims (int): Input dimension.
@@ -77,39 +78,58 @@ class DurationPredictor(torch.nn.Module):
             dropout_rate (float, optional): Dropout rate.
             offset (float, optional): Offset value to avoid nan in log domain.
             dur_loss_type (str, optional): Loss type ('mse', 'huber', etc.).
-            arch (str, optional): Architecture type ('resnet' or standard CNN).
-            use_sdp (bool, optional): Whether to use Stochastic Duration Predictor.
-            sdp_ratio (float, optional): Interpolation ratio between SDP and DP outputs during inference.
-            sdp_n_chans (int, optional): Hidden channels for SDP.
-            gin_channels (int, optional): Speaker embedding channels for SDP conditioning.
+            arch (str, optional): Architecture type: 'resnet', 'fs2' (convolutional
+                stacks) or 'attn_gru' (local relative attention blocks + GRU).
+            head_args (dict, optional): Extra arguments for the 'attn_gru' head, see
+                modules/fastspeech/dur_head.py.
+            use_allocation (bool, optional): Predict the split of each group's frame
+                budget instead of absolute durations.
         """
         super(DurationPredictor, self).__init__()
         self.offset = offset
+        self.arch = arch
+        self.use_allocation = use_allocation
+        self.head = None
         self.conv = torch.nn.ModuleList()
         self.kernel_size = kernel_size
         self.use_resnet = (arch == 'resnet')
-        for idx in range(n_layers):
-            in_chans = in_dims if idx == 0 else n_chans
-            if self.use_resnet:
-                self.conv.append(nn.Sequential(
-                    LayerNorm(in_chans, dim=1),
-                    nn.Conv1d(in_chans, n_chans, kernel_size, stride=1, padding=kernel_size // 2),
-                    nn.ReLU(),
-                    nn.Conv1d(n_chans, n_chans, 1),
-                    nn.Dropout(dropout_rate)
-                ))
-            else:
-                self.conv.append(nn.Sequential(
-                    nn.Identity(),  # this is a placeholder for ConstantPad1d which is now merged into Conv1d
-                    nn.Conv1d(in_chans, n_chans, kernel_size, stride=1, padding=kernel_size // 2),
-                    nn.ReLU(),
-                    LayerNorm(n_chans, dim=1),
-                    nn.Dropout(dropout_rate)
-                ))
-        if self.use_resnet and in_dims != n_chans:
-            self.res_conv = nn.Conv1d(in_dims, n_chans, 1)
+        if arch == 'attn_gru':
+            # Dense-matrix head: every learned parameter is 2-D, and norm
+            # placement is pre-norm. Replaces the convolutional stack.
+            self.head = DurationHeadV2.from_hparams(
+                in_dims=in_dims,
+                hidden_size=n_chans,
+                dropout=dropout_rate,
+                head_args=head_args,
+            )
         else:
-            self.res_conv = None
+            for idx in range(n_layers):
+                in_chans = in_dims if idx == 0 else n_chans
+                if self.use_resnet:
+                    self.conv.append(nn.Sequential(
+                        LayerNorm(in_chans, dim=1),
+                        nn.Conv1d(in_chans, n_chans, kernel_size, stride=1, padding=kernel_size // 2),
+                        nn.ReLU(),
+                        nn.Conv1d(n_chans, n_chans, 1),
+                        nn.Dropout(dropout_rate)
+                    ))
+                else:
+                    self.conv.append(nn.Sequential(
+                        nn.Identity(),  # this is a placeholder for ConstantPad1d which is now merged into Conv1d
+                        nn.Conv1d(in_chans, n_chans, kernel_size, stride=1, padding=kernel_size // 2),
+                        nn.ReLU(),
+                        LayerNorm(n_chans, dim=1),
+                        nn.Dropout(dropout_rate)
+                    ))
+            if self.use_resnet and in_dims != n_chans:
+                self.res_conv = nn.Conv1d(in_dims, n_chans, 1)
+            else:
+                self.res_conv = None
+        # The head needs group ids when position embeddings are on, even
+        # without the allocation output; the exported graph then gains word_div.
+        self.needs_group_ids = use_allocation or (
+            self.head is not None and self.head.position_embed
+        )
         self.loss_type = dur_loss_type
         if self.loss_type in ['mse', 'huber']:
             self.out_dims = 1
@@ -124,21 +144,6 @@ class DurationPredictor(torch.nn.Module):
 
         self.linear = AdamWLinear(n_chans, self.out_dims)
 
-        self.use_sdp = use_sdp
-        self.sdp_ratio = sdp_ratio
-
-        if self.use_sdp:
-            self.sdp = StochasticDurationPredictor(
-                in_channels=in_dims,
-                filter_channels=sdp_n_chans,
-                kernel_size=3,
-                p_dropout=0.5,
-                n_flows=4,
-                gin_channels=gin_channels
-            )
-        else:
-            self.sdp = None
-
     def out2dur(self, xs):
         if self.loss_type in ['mse', 'huber']:
             # NOTE: calculate loss in log domain
@@ -149,89 +154,66 @@ class DurationPredictor(torch.nn.Module):
             raise NotImplementedError()
         return dur
 
-    def forward(self, xs, x_masks=None, infer=True, ph_dur=None, sdp_cond=None, spk_embed=None):
+    def forward(self, xs, x_masks=None, infer=True, ph2word=None, group_budget=None):
         """Calculate forward propagation.
         Args:
             xs (Tensor): Batch of input sequences (B, Tmax, idim).
             x_masks (BoolTensor, optional): Batch of masks indicating padded part (B, Tmax).
             infer (bool): Whether inference
-            ph_dur (Tensor, optional): Ground truth phoneme duration [B, Tmax]. Needed for SDP training.
-            sdp_cond (Tensor, optional): Conditioning sequence for SDP [B, Tmax, idim].
-            spk_embed (Tensor, optional): Speaker embedding [B, gin_channels].
+            ph2word (Tensor, optional): Group index per phoneme [B, Tmax], 0 for padding.
+                Required when the allocation output is enabled.
+            group_budget (Tensor, optional): Frame budget per group [B, T_w], in the same
+                order as the group indices. Required when the allocation output is enabled.
 
         Returns:
-            tuple:
-                - dur_pred (Tensor): Final predicted linear durations [B, Tmax].
-                - loss_sdp (Tensor or int): SDP negative log-likelihood flow loss (0 if not using SDP or inferring).
-                - sdp_pred (Tensor or None): SDP reverse prediction for MSE regression computing.
+            Tensor: Final predicted linear durations [B, Tmax]. With the allocation output
+            enabled this is the number of frames per phoneme, integer in inference.
         """
+        if self.use_allocation and (ph2word is None or group_budget is None):
+            raise ValueError(
+                'the allocation output needs ph2word and group_budget; pass the group '
+                'indices of the batch (training) or derived from word_div (inference)'
+            )
         non_pad_mask = 1.0 - x_masks.float()         # [B, Tmax]
         non_pad_mask_1d = non_pad_mask.unsqueeze(1)  # [B, 1, Tmax]
         non_pad_mask_2d = non_pad_mask.unsqueeze(2)  # [B, Tmax, 1]
-        g = spk_embed.transpose(1, -1) if spk_embed is not None else None  # [B, gin_chans, 1]
-        dp_xs = xs.transpose(1, -1)  # [B, Tmax, idim] -> [B, idim, Tmax]
-        for idx, f in enumerate(self.conv):
-            if self.use_resnet:
-                residual = self.res_conv(dp_xs) if (idx == 0 and self.res_conv is not None) else dp_xs
-                dp_xs = residual + f(dp_xs)
-            else:
-                dp_xs = f(dp_xs)
+        if self.head is not None:
+            # Dense-matrix head (attention blocks + GRU); handles its own masking.
+            dp_feat = self.head(xs, x_masks=x_masks, group_ids=ph2word)  # [B, Tmax, n_chans]
+        else:
+            dp_xs = xs.transpose(1, -1)  # [B, Tmax, idim] -> [B, idim, Tmax]
+            for idx, f in enumerate(self.conv):
+                if self.use_resnet:
+                    residual = self.res_conv(dp_xs) if (idx == 0 and self.res_conv is not None) else dp_xs
+                    dp_xs = residual + f(dp_xs)
+                else:
+                    dp_xs = f(dp_xs)
 
-            if x_masks is not None:
-                dp_xs = dp_xs * non_pad_mask_1d
+                if x_masks is not None:
+                    dp_xs = dp_xs * non_pad_mask_1d
 
-        dp_feat = dp_xs.transpose(1, -1)             # [B, idim, Tmax] -> [B, Tmax, n_chans]
-
-        loss_sdp = 0.0
-        sdp_pred = None
+            dp_feat = dp_xs.transpose(1, -1)             # [B, idim, Tmax] -> [B, Tmax, n_chans]
 
         # ---- output head --------------------------------------------------
         dp_xs = self.linear(dp_feat)             # [B, Tmax, C]
         dp_xs = dp_xs * non_pad_mask_2d          # Mask padded areas [B, Tmax, C]
-        dur_pred = self.out2dur(dp_xs)           # Convert to linear domain [B, Tmax]
-
-        if self.use_sdp and sdp_cond is not None:
-            sdp_cond_t = sdp_cond.transpose(1, -1)   # [B, idim, Tmax]
-
-            if not infer:
-                nll_loss = self.sdp(
-                    x=sdp_cond_t,
-                    x_mask=non_pad_mask_1d,
-                    w=ph_dur,
-                    g=g,
-                    reverse=False,
-                    noise_scale=1.0
-                )
-
-                l_length_sdp = nll_loss / torch.sum(non_pad_mask_1d)
-                loss_sdp = torch.sum(l_length_sdp.float())
-
-                logw_sdp = self.sdp(
-                    x=sdp_cond_t,
-                    x_mask=non_pad_mask_1d,
-                    g=g,
-                    reverse=True,
-                    noise_scale=1.0
-                )
-                sdp_pred_continuous = self.out2dur(logw_sdp.transpose(1, -1) * non_pad_mask_2d)
-                sdp_pred = sdp_pred_continuous + (torch.ceil(sdp_pred_continuous) - sdp_pred_continuous).detach()
-
+        if self.use_allocation:
+            logits = dp_xs.squeeze(-1)           # [B, Tmax]
+            members = group_mask(ph2word, x_masks=x_masks)
+            log_prob = group_log_prob(logits, members)
+            prob = log_prob.exp() * non_pad_mask
+            budget = group_budget.gather(1, ph2word.clamp(min=1) - 1)
+            if infer:
+                dur_pred = allocate_counts(prob, budget, x_masks=x_masks)
             else:
-                logw_sdp = self.sdp(
-                    x=sdp_cond_t,
-                    x_mask=non_pad_mask_1d,
-                    g=g,
-                    reverse=True,
-                    noise_scale=0.8
-                )
-                sdp_pred = torch.ceil(self.out2dur(logw_sdp.transpose(1, -1) * non_pad_mask_2d))
-
-                dur_pred = (sdp_pred * self.sdp_ratio) + (dur_pred * (1.0 - self.sdp_ratio))
-
-        if infer:
-            return dur_pred.clamp(min=0.0), None, sdp_pred
+                # differentiable allocation: the probabilities scaled by the budget
+                dur_pred = prob * budget
         else:
-            return dur_pred, loss_sdp, sdp_pred
+            dur_pred = self.out2dur(dp_xs)       # Convert to linear domain [B, Tmax]
+            if infer:
+                dur_pred = dur_pred.clamp(min=0.0)
+
+        return dur_pred
 
 
 class VariancePredictor(torch.nn.Module):

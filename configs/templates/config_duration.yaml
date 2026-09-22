@@ -71,14 +71,6 @@ use_laurel_block: false
 use_stretch_embed: false
 use_variance_scaling: true
 hidden_size: 384
-# SDP
-use_sdp: false
-sdp_ratio: 0.2
-sdp_n_chans: 192
-lambda_sdp_loss: 0.005
-lambda_sdp_reg_loss: 0.1
-sdp_reg_warmup_steps: 16000
-
 dur_prediction_args:
   arch: resnet
   hidden_size: 256
@@ -90,6 +82,22 @@ dur_prediction_args:
   lambda_pdur_loss: 0.3
   lambda_wdur_loss: 1.0
   lambda_sdur_loss: 3.0
+  lambda_alloc_loss: 0.0
+  # Distribute each group's (note/syllable) frame budget instead of predicting
+  # absolute durations. Consumers of the exported model must then accept the
+  # word_div and word_dur inputs of the dur model; see docs.
+  use_allocation: false
+  # Extra arguments for `arch: attn_gru` (ignored by the convolutional archs).
+  head_args:
+    num_blocks: 4
+    num_heads: 4
+    radius: 8
+    ffn_mult: 4
+    ffn_act: gelu
+    gru_layers: 1
+    gru_bidirectional: false
+    position_embed: true
+    max_position: 8
 
 use_melody_encoder: true
 melody_encoder_args:

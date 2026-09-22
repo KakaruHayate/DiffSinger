@@ -7,7 +7,7 @@ from torch.nn import Parameter
 from typing import List
 from .chained_optimizer import ChainedOptimizer, OptimizerSpec
 
-from modules.commons.common_layers import AdamWLinear, AdamWConv1d
+from modules.commons.common_layers import AdamWConv1d, AdamWLinear
 
 
 def zeropower_via_newtonschulz5(G: Tensor, steps: int) -> Tensor:

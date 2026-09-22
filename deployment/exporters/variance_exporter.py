@@ -250,12 +250,26 @@ class DiffSingerVarianceExporter(BaseExporter):
             )
 
             print(f'Exporting {self.dur_predictor_class_name}...')
+            dur_hparams = hparams['dur_prediction_args']
+            use_allocation = dur_hparams.get('use_allocation', False)
+            needs_group_ids = use_allocation or (
+                self.model.dur_predictor.head is not None
+                and self.model.dur_predictor.head.position_embed
+            )
+            if needs_group_ids:
+                # Group ids are derived in-graph from word_div; the allocation
+                # output additionally needs the per-group frame budgets.
+                word_div = torch.LongTensor([[2, 2, 1]]).to(self.device)
+                if use_allocation:
+                    word_dur = torch.LongTensor([[8, 3, 4]]).to(self.device)
             torch.onnx.export(
                 self.model.view_as_dur_predictor(),
                 (
                     encoder_out,
                     x_masks,
                     ph_midi,
+                    *([word_div] if needs_group_ids else []),
+                    *([word_dur] if use_allocation else []),
                     *([torch.rand(
                         1, 5, hparams['hidden_size'],
                         dtype=torch.float32, device=self.device
@@ -266,6 +280,8 @@ class DiffSingerVarianceExporter(BaseExporter):
                     'encoder_out',
                     'x_masks',
                     'ph_midi',
+                    *(['word_div'] if needs_group_ids else []),
+                    *(['word_dur'] if use_allocation else []),
                     *(['spk_embed'] if input_spk_embed else [])
                 ],
                 output_names=[
@@ -278,6 +294,8 @@ class DiffSingerVarianceExporter(BaseExporter):
                     'ph_dur_pred': {
                         1: 'n_tokens'
                     },
+                    **({'word_div': {1: 'n_words'}} if needs_group_ids else {}),
+                    **({'word_dur': {1: 'n_words'}} if use_allocation else {}),
                     **({'spk_embed': {1: 'n_tokens'}} if input_spk_embed else {}),
                     **encoder_common_axes
                 },

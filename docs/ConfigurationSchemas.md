@@ -566,7 +566,7 @@ Arguments for phoneme duration prediction.
 
 ### dur_prediction_args.arch
 
-Architecture of duration predictor. `'fs2'` uses the original FastSpeech2 duration predictor with standard convolution layers. `'resnet'` uses a residual-style variant with additional layer normalization and residual connections, which may improve training stability.
+Architecture of duration predictor. `'fs2'` uses the original FastSpeech2 duration predictor with standard convolution layers. `'resnet'` uses a residual-style variant with additional layer normalization and residual connections, which may improve training stability. `'attn_gru'` uses pre-norm local relative attention blocks followed by a GRU, in which every parameter is a dense 2-D matrix; see [dur_prediction_args.head_args](#dur_prediction_argshead_args).
 
 <table><tbody>
 <tr><td align="center"><b>visibility</b></td><td>variance</td>
@@ -574,7 +574,7 @@ Architecture of duration predictor. `'fs2'` uses the original FastSpeech2 durati
 <tr><td align="center"><b>customizability</b></td><td>normal</td>
 <tr><td align="center"><b>type</b></td><td>str</td>
 <tr><td align="center"><b>default</b></td><td>resnet</td>
-<tr><td align="center"><b>constraints</b></td><td>Choose from 'fs2', 'resnet'.</td>
+<tr><td align="center"><b>constraints</b></td><td>Choose from 'fs2', 'resnet', 'attn_gru'.</td>
 </tbody></table>
 
 ### dur_prediction_args.dropout
@@ -587,6 +587,18 @@ Dropout rate in duration predictor. Like [dropout](#dropout), modifying it does 
 <tr><td align="center"><b>customizability</b></td><td>not recommended</td>
 <tr><td align="center"><b>type</b></td><td>float</td>
 <tr><td align="center"><b>default</b></td><td>0.1</td>
+</tbody></table>
+
+### dur_prediction_args.head_args
+
+Extra arguments for the `'attn_gru'` duration head. Ignored when `arch` is `'fs2'` or `'resnet'`. The head replaces the convolutional stack with `num_blocks` pre-norm blocks of local relative attention (`num_heads` heads, window radius `radius`) plus a feed-forward of expansion `ffn_mult` and activation `ffn_act`, followed by a `gru_layers`-layer GRU. `hidden_size` is reused as the head width. All head parameters are dense 2-D matrices or gains, so they are assigned to the AdamW group of the optimizer rather than to the matrix-space (Muon) group; see [optimizer_args.optimizer_cls](#optimizer_argsoptimizer_cls).
+
+<table><tbody>
+<tr><td align="center"><b>visibility</b></td><td>variance</td>
+<tr><td align="center"><b>scope</b></td><td>nn</td>
+<tr><td align="center"><b>customizability</b></td><td>normal</td>
+<tr><td align="center"><b>type</b></td><td>dict[str, Any]</td>
+<tr><td align="center"><b>constraints</b></td><td>Supported keys and defaults: `num_blocks=4` (int, at least 0), `num_heads=4` (int, must divide `hidden_size`), `radius=8` (int, at least 0), `ffn_mult=4` (int), `ffn_act='gelu'` (choose from 'gelu', 'relu', 'silu'), `gru_layers=1` (int, at least 1), `gru_bidirectional=false` (bool; requires an even `hidden_size`), `position_embed=true` (bool), `max_position=8` (int, at least 0). Padding positions are zeroed before the GRU, so a forward-only GRU is independent of trailing padding, while the backward direction of a bidirectional GRU reads trailing padding states; enable it only if that coupling is acceptable. `position_embed` adds two embeddings for the position of an item inside its group and the same position counted from the end of the group, both derived from `word_div` / `ph2word` and clamped to `max_position`. Enabling it makes the exported `dur` model gain a `word_div` input (used only to derive the group positions), even when [use_allocation](#dur_prediction_argsuse_allocation) is off. Unknown keys raise a `ValueError` when the model is built.</td>
 </tbody></table>
 
 ### dur_prediction_args.hidden_size
@@ -611,6 +623,18 @@ Kernel size of convolution layers of duration predictor.
 <tr><td align="center"><b>customizability</b></td><td>normal</td>
 <tr><td align="center"><b>type</b></td><td>int</td>
 <tr><td align="center"><b>default</b></td><td>3</td>
+</tbody></table>
+
+### dur_prediction_args.lambda_alloc_loss
+
+Coefficient of the group allocation loss when calculating joint duration loss. The loss compares the distribution of the predicted phoneme durations inside each group (a note or syllable) with the target distribution, so it only measures how a group's frame budget is split and is scale invariant inside the group. Keep the word and sentence coefficients non-zero unless the model itself receives the budget, otherwise nothing anchors the absolute frame scale.
+
+<table><tbody>
+<tr><td align="center"><b>visibility</b></td><td>variance</td>
+<tr><td align="center"><b>scope</b></td><td>training</td>
+<tr><td align="center"><b>customizability</b></td><td>normal</td>
+<tr><td align="center"><b>type</b></td><td>float</td>
+<tr><td align="center"><b>default</b></td><td>0.0</td>
 </tbody></table>
 
 ### dur_prediction_args.lambda_pdur_loss
@@ -688,6 +712,18 @@ Number of duration predictor layers.
 <tr><td align="center"><b>customizability</b></td><td>normal</td>
 <tr><td align="center"><b>type</b></td><td>int</td>
 <tr><td align="center"><b>default</b></td><td>5</td>
+</tbody></table>
+
+### dur_prediction_args.use_allocation
+
+Predict how each group's (a note or syllable) frame budget is split, instead of predicting absolute phoneme durations. The phones of a group are normalized into a distribution over the group's budget, and the output is an integer frame count that sums to the budget exactly. Training takes the budget from the ground-truth group sums of `ph2word`; inference takes it from `word_dur`. Enabling this changes the inputs of the exported `dur` model, which gains `word_div` and `word_dur`, so every consumer of the model must be able to provide them.
+
+<table><tbody>
+<tr><td align="center"><b>visibility</b></td><td>variance</td>
+<tr><td align="center"><b>scope</b></td><td>nn</td>
+<tr><td align="center"><b>customizability</b></td><td>normal</td>
+<tr><td align="center"><b>type</b></td><td>bool</td>
+<tr><td align="center"><b>default</b></td><td>false</td>
 </tbody></table>
 
 ### enc_ffn_kernel_size

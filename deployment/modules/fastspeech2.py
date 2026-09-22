@@ -197,13 +197,29 @@ class FastSpeech2VarianceONNX(FastSpeech2Variance):
         x_masks = tokens == PAD_INDEX
         return self.encoder(txt_embed, extra_embed, x_masks), x_masks
 
-    def forward_dur_predictor(self, encoder_out, x_masks, ph_midi, spk_embed=None):
+    def forward_dur_predictor(self, encoder_out, x_masks, ph_midi, word_div=None, word_dur=None, spk_embed=None):
         midi_embed = self.midi_embed(ph_midi)
         dur_cond = encoder_out + midi_embed
-        sdp_cond = dur_cond
         if hparams['use_spk_id'] and spk_embed is not None:
             dur_cond = dur_cond + spk_embed
-        ph_dur, _, _ = self.dur_predictor(dur_cond, x_masks=x_masks, sdp_cond=sdp_cond, spk_embed=spk_embed)
+        ph2word = None
+        group_budget = None
+        if self.dur_predictor.needs_group_ids:
+            if word_div is None:
+                raise ValueError(
+                    'the duration head needs group ids; the exporter must pass '
+                    'word_div and consumers must provide it'
+                )
+            ph2word = self.lr(word_div)  # [1, T_ph], 1-based, 0 for padding
+            if self.dur_predictor.use_allocation:
+                if word_dur is None:
+                    raise ValueError(
+                        'the allocation output needs word_dur; the exporter must '
+                        'pass it and consumers must provide it'
+                    )
+                group_budget = word_dur
+        ph_dur = self.dur_predictor(
+            dur_cond, x_masks=x_masks, ph2word=ph2word, group_budget=group_budget)
         return ph_dur
 
     def view_as_encoder(self):
