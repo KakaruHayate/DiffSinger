@@ -81,8 +81,8 @@ class FastSpeech2Variance(nn.Module):
                 word_dur = ph_dur.new_zeros(b, ph2word.max() + 1).scatter_add(
                     1, ph2word, ph_dur
                 )[:, 1:]  # [B, T_ph] => [B, T_w]
-            word_dur = torch.gather(F.pad(word_dur, [1, 0], value=0), 1, ph2word)  # [B, T_w] => [B, T_ph]
-            word_dur_embed = self.word_dur_embed(word_dur.float()[:, :, None])
+            word_dur_expanded = torch.gather(F.pad(word_dur, [1, 0], value=0), 1, ph2word)  # [B, T_w] => [B, T_ph]
+            word_dur_embed = self.word_dur_embed(word_dur_expanded.float()[:, :, None])
             extra_embed = onset_embed + word_dur_embed
         elif self.use_variance_scaling:
             extra_embed = self.ph_dur_embed(torch.log(1 + ph_dur.float())[:, :, None])
