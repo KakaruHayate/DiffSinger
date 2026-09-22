@@ -111,8 +111,8 @@ class LocalRelativeAttention(nn.Module):
         self.head_size = hidden_size // num_heads
         self.radius = radius
         self.scale = 1.0 / math.sqrt(self.head_size)
-        self.qkv = AdamWLinear(hidden_size, 3 * hidden_size, bias=False)
-        self.out_proj = AdamWLinear(hidden_size, hidden_size, bias=False)
+        self.qkv = nn.Linear(hidden_size, 3 * hidden_size, bias=False)
+        self.out_proj = nn.Linear(hidden_size, hidden_size, bias=False)
         self.dropout = nn.Dropout(dropout)
         # Stored flat on purpose: a 1-D parameter is not a hidden matrix, so it
         # follows the same optimizer rule as the other 1-D parameters.
@@ -156,8 +156,8 @@ class FFN(nn.Module):
         if act not in _ACTIVATIONS:
             raise ValueError(f"unsupported activation {act!r}, expected one of {sorted(_ACTIVATIONS)}")
         self.act = act
-        self.linear_1 = AdamWLinear(hidden_size, ffn_mult * hidden_size)
-        self.linear_2 = AdamWLinear(ffn_mult * hidden_size, hidden_size)
+        self.linear_1 = nn.Linear(hidden_size, ffn_mult * hidden_size)
+        self.linear_2 = nn.Linear(ffn_mult * hidden_size, hidden_size)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
@@ -218,7 +218,7 @@ class DurationHeadV2(nn.Module):
         self.gru_bidirectional = gru_bidirectional
         self.position_embed = position_embed
         self.max_position = max_position
-        self.in_proj = AdamWLinear(in_dims, hidden_size)
+        self.in_proj = nn.Linear(in_dims, hidden_size)
         self.blocks = nn.ModuleList(
             Block(hidden_size, num_heads, radius, ffn_mult, ffn_act, dropout)
             for _ in range(num_blocks)
