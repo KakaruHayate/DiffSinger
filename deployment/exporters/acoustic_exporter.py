@@ -145,6 +145,11 @@ class DiffSingerAcousticExporter(BaseExporter):
         dsconfig['use_speed_embed'] = self.expose_velocity
         for variance in VARIANCE_CHECKLIST:
             dsconfig[f'use_{variance}_embed'] = (variance in self.model.fs2.variance_embed_list)
+        # voicing domain marker: model self-description for inference frontends.
+        # Only written for non-default domains (absent = 'db'), so standard exports are untouched.
+        if 'voicing' in self.model.fs2.variance_embed_list and hparams.get('voicing_domain', 'db') != 'db':
+            dsconfig['voicing_domain'] = hparams['voicing_domain']
+            dsconfig['voicing_mu'] = hparams.get('voicing_mu', 255.0)
         # sampling acceleration and shallow diffusion
         dsconfig['use_continuous_acceleration'] = True
         dsconfig['use_variable_depth'] = self.model.use_shallow_diffusion

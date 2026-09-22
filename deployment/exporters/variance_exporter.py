@@ -176,6 +176,11 @@ class DiffSingerVarianceExporter(BaseExporter):
             dsconfig['variance'] = f'{model_name}.variance.onnx'
             for variance in VARIANCE_CHECKLIST:
                 dsconfig[f'predict_{variance}'] = (variance in self.model.variance_prediction_list)
+            # voicing domain marker: model self-description for inference frontends.
+            # Only written for non-default domains (absent = 'db'), so standard exports are untouched.
+            if 'voicing' in self.model.variance_prediction_list and hparams.get('voicing_domain', 'db') != 'db':
+                dsconfig['voicing_domain'] = hparams['voicing_domain']
+                dsconfig['voicing_mu'] = hparams.get('voicing_mu', 255.0)
         # sampling acceleration
         dsconfig['use_continuous_acceleration'] = True
         # frame specifications
