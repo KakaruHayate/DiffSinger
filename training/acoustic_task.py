@@ -114,7 +114,7 @@ class AcousticTask(BaseTask):
                 # NOTE: LYNXNet2 defaults to swiglu when glu_type is unset
                 self._fused_kernels_patched = patch_diffusion_module(
                     self.model.diffusion,
-                    glu_type=hparams['backbone_args'].get('glu_type', 'swiglu'),
+                    glu_type=(self.model.backbone_args or {}).get('glu_type', 'swiglu'),
                 )
                 rank_zero_info('Fused kernels: patched %d LYNXNet2 blocks', self._fused_kernels_patched)
             except ImportError as e:

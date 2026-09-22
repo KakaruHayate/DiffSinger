@@ -193,7 +193,8 @@ class AcousticBinarizer(BaseBinarizer):
         if self.need_voicing:
             # get ground truth voicing
             voicing = get_voicing(
-                dec_waveform, None, None, length=length, domain=hparams.get('voicing_domain', 'db')
+                dec_waveform, None, None, length=length,
+                domain=hparams.get('voicing_domain', 'db'), mu=hparams.get('voicing_mu', 255.0)
             )
 
             global voicing_smooth
@@ -318,9 +319,14 @@ class AcousticBinarizer(BaseBinarizer):
             k_from_raw = int(scale / (1 + total_scale) * len(all_item_names))
             k_from_aug = int(total_scale * scale / (1 + total_scale) * len(all_item_names))
             k_mutate = int(total_scale * scale / (1 + scale) * len(all_item_names))
+            # Cap k_mutate at len(aug_list): random.sample cannot return more
+            # distinct items than exist, and an uncapped count would leave
+            # aug_types/aug_items mismatched so zip() silently drops the extra
+            # type-2 entries.
+            k_mutate = min(k_mutate, len(aug_list))
             aug_types = [0] * k_from_raw + [1] * k_from_aug + [2] * k_mutate
             aug_items = random.choices(all_item_names, k=k_from_raw) + \
-                random.choices(aug_list, k=k_from_aug) + random.sample(aug_list, k=min(k_mutate, len(aug_list)))
+                random.choices(aug_list, k=k_from_aug) + random.sample(aug_list, k=k_mutate)
 
             for aug_type, aug_item in zip(aug_types, aug_items):
                 # Uniform distribution in log domain

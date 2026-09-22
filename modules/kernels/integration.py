@@ -177,9 +177,21 @@ def patch_diffusion_module(diffusion, glu_type='softsign_glu'):
       GaussianDiffusion / PitchDiffusion / MultiVarianceDiffusion → .denoise_fn
       RectifiedFlow / PitchRectifiedFlow / MultiVarianceRectifiedFlow → .velocity_fn
 
+    Degrades gracefully to eager kernels when Triton is unavailable
+    (returns 0 with a warning instead of raising), so task construction
+    with use_fused_kernels=true never fails on Triton-less platforms.
+
     Returns:
         Number of blocks patched.
     """
+    if not is_triton_available():
+        warnings.warn(
+            'Fused kernels require a working Triton installation; '
+            'running eager. Install Triton for this platform or set '
+            'use_fused_kernels=false.',
+            stacklevel=2,
+        )
+        return 0
     return (
         _try_patch(diffusion, 'denoise_fn', glu_type) +
         _try_patch(diffusion, 'velocity_fn', glu_type)
