@@ -95,7 +95,7 @@ dur_prediction_args:
     radius: 8
     ffn_mult: 4
     ffn_act: gelu
-    gru_layers: 1
+    gru_layers: 0  # 0 drops the recurrent mixer (best measured so far)
     gru_bidirectional: false
     position_embed: true
     max_position: 8

@@ -25,7 +25,11 @@ normalization.
 Structure
 ---------
 ``x -> in_proj -> N x [pre-norm local relative attention + pre-norm FFN]
-   -> GRU -> out_norm`` and the caller applies the output projection.
+   -> [optional GRU] -> out_norm`` and the caller applies the output projection.
+
+The trailing recurrent mixer turned out to be unnecessary on the multi-speaker
+corpus: dropping it measures better than either a GRU or a dilated conv stack,
+so ``gru_layers=0`` is a first-class configuration rather than a degenerate one.
 
 Every operation is vectorized (no per-position Python loops) and keeps the
 sequence length dynamic, so the module stays export-safe.
@@ -44,14 +48,14 @@ at real positions by float noise only. The backward direction of a bidirectional
 GRU does read trailing padding states, and the resulting change at real
 positions is *not* negligible (measured ~0.3 in activation units for a small
 head), so ``gru_bidirectional`` defaults to ``False``. Attention already mixes
-both directions across the window, so a forward-only GRU is enough for the
-long-range accumulation this head needs.
+both directions across the window; with the mixer removed altogether the head is
+padding-independent by construction.
 
 Export note
 -----------
 Batch size stays 1 as in the other exported duration/variance graphs. Batch sizes
 other than 1 combined with a dynamic sequence length are not supported by the
-ONNX GRU op.
+ONNX GRU op — a consideration that disappears with ``gru_layers=0``.
 """
 
 import math
@@ -191,7 +195,9 @@ class DurationHeadV2(nn.Module):
         num_heads / radius: attention head count and local window radius
         ffn_mult / ffn_act: feed-forward expansion and activation
         dropout: dropout used by attention, feed-forward and the GRU
-        gru_layers / gru_bidirectional: GRU depth and direction
+        gru_layers / gru_bidirectional: depth and direction of the trailing GRU;
+            set ``gru_layers`` to 0 to drop the recurrent mixer entirely — the
+            attention blocks then feed the output norm directly
         position_embed: add the forward/reverse within-group position embeddings
             (on by default; requires group ids at every call site)
         max_position: clamp for those embeddings
@@ -203,9 +209,9 @@ class DurationHeadV2(nn.Module):
         super().__init__()
         if num_blocks < 0:
             raise ValueError(f"num_blocks must be non-negative, got {num_blocks}")
-        if gru_layers < 1:
-            raise ValueError(f"gru_layers must be positive, got {gru_layers}")
-        if gru_bidirectional and hidden_size % 2 != 0:
+        if gru_layers < 0:
+            raise ValueError(f"gru_layers must be non-negative, got {gru_layers}")
+        if gru_layers > 0 and gru_bidirectional and hidden_size % 2 != 0:
             raise ValueError(
                 f"hidden_size {hidden_size} must be even for a bidirectional GRU"
             )
@@ -222,14 +228,20 @@ class DurationHeadV2(nn.Module):
             Block(hidden_size, num_heads, radius, ffn_mult, ffn_act, dropout)
             for _ in range(num_blocks)
         )
-        self.gru = nn.GRU(
-            hidden_size,
-            hidden_size // 2 if gru_bidirectional else hidden_size,
-            num_layers=gru_layers,
-            batch_first=True,
-            bidirectional=gru_bidirectional,
-            dropout=dropout if gru_layers > 1 else 0.0,
-        )
+        if gru_layers > 0:
+            self.gru = nn.GRU(
+                hidden_size,
+                hidden_size // 2 if gru_bidirectional else hidden_size,
+                num_layers=gru_layers,
+                batch_first=True,
+                bidirectional=gru_bidirectional,
+                dropout=dropout if gru_layers > 1 else 0.0,
+            )
+        else:
+            # ``gru_layers=0`` drops the recurrent mixer: the attention blocks
+            # feed the output norm directly, which is the best setting measured
+            # so far on the multi-speaker corpus.
+            self.gru = None
         self.out_norm = nn.LayerNorm(hidden_size)
         if position_embed:
             self.pos_embed = nn.Embedding(max_position + 1, hidden_size)
@@ -280,6 +292,7 @@ class DurationHeadV2(nn.Module):
         hidden = hidden * mask
         for block in self.blocks:
             hidden = block(hidden, non_pad_mask)
-        hidden, _ = self.gru(hidden)
-        hidden = hidden * mask
+        if self.gru is not None:
+            hidden, _ = self.gru(hidden)
+            hidden = hidden * mask
         return self.out_norm(hidden)
