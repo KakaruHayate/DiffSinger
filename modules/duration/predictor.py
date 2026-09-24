@@ -9,7 +9,7 @@ Structure
 ``x -> in_proj -> optional within-word positions -> N x pre-norm sliding-window
 block -> out_norm -> out_proj`` followed by one of two output tails:
 
-* ``use_allocation=True`` (the default of the shipped configurations) reads the
+* ``use_allocation=True`` (the default) reads the
   word structure of the score: the phonemes of a word are turned into a
   distribution over that word's frame budget, and inference returns the integer
   frame counts of the split, which sum to the budget exactly.
@@ -108,9 +108,12 @@ class DurationPredictorV2(nn.Module):
     def from_hparams(cls, in_dims, dur_hparams: dict) -> 'DurationPredictorV2':
         """Build from the flat ``dur_prediction_args`` configuration block.
 
-        Every argument that the convolutional predictors do not share is read
-        with a default, so that a configuration written before this class existed
-        keeps building.
+        Every argument is read with the shipped default, so that selecting
+        ``arch: 'attn'`` is enough to get the behaviour this class is for: the
+        allocation output, the within-word positions and the default stack shape.
+        A configuration written before this class existed names a convolutional
+        architecture and never reaches here, so the defaults only ever decide
+        what an attention model does when the configuration is silent about it.
         """
         return cls(
             in_dims=in_dims,
@@ -123,7 +126,7 @@ class DurationPredictorV2(nn.Module):
             dropout=dur_hparams['dropout'],
             use_pos_embed=dur_hparams.get('dur_pos_in_group', True),
             max_pos=dur_hparams.get('dur_max_group_pos', 8),
-            use_allocation=dur_hparams.get('use_allocation', False),
+            use_allocation=dur_hparams.get('use_allocation', True),
             offset=dur_hparams['log_offset'],
             loss_type=dur_hparams['loss_type'],
         )

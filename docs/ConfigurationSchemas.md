@@ -704,7 +704,7 @@ Kernel size of convolution layers of duration predictor. Used by the convolution
 
 ### dur_prediction_args.lambda_alloc_loss
 
-Coefficient of the word allocation loss when calculating joint duration loss. The loss turns the phonemes of a word into a distribution over that word's frame budget and compares it with the target distribution with a cross entropy, so it only measures how a budget is split and is scale invariant inside a word. It is meaningful on its own only when the absolute frame scale is pinned somewhere: with [arch](#dur_prediction_argsarch) set to `'attn'` and [use_allocation](#dur_prediction_argsuse_allocation) `true`, the model output already carries the frame budget of every word, so the word and sentence terms are constant and this term and the phoneme term are the ones that train; with the convolutional architectures or `use_allocation` `false`, the phoneme, word and sentence terms are the ones that set the scale, and a non-zero value here additionally shapes how each budget is split.
+Coefficient of the word allocation loss when calculating joint duration loss. The loss turns the phonemes of a word into a distribution over that word's frame budget and compares it with the target distribution with a cross entropy, so it only measures how a budget is split and is scale invariant inside a word. It is meaningful on its own only when the absolute frame scale is pinned somewhere: with [arch](#dur_prediction_argsarch) set to `'attn'` and [use_allocation](#dur_prediction_argsuse_allocation) `true`, the model output already carries the frame budget of every word, so the word and sentence terms are constant and this term and the phoneme term are the ones that train; with the convolutional architectures or `use_allocation` `false`, the phoneme, word and sentence terms are the ones that set the scale, and a non-zero value here additionally shapes how each budget is split. When the key is absent the value defaults to `1.0` for a predictor that allocates and to `0.0` otherwise, so a configuration written before this key existed keeps the loss it had.
 
 <table><tbody>
 <tr><td align="center"><b>visibility</b></td><td>variance</td>
@@ -801,7 +801,7 @@ Whether the duration predictor predicts how each word (a note or syllable) split
 <tr><td align="center"><b>customizability</b></td><td>normal</td>
 <tr><td align="center"><b>type</b></td><td>bool</td>
 <tr><td align="center"><b>default</b></td><td>true</td>
-<tr><td align="center"><b>constraints</b></td><td>Only effective when [dur_prediction_args.arch](#dur_prediction_argsarch) is `'attn'`. A configuration written before this key existed falls back to `false` in code, which keeps the previous absolute-duration behaviour. Requires a consumer that can supply `word_div` and `word_dur`; without them the exported model raises an error instead of silently predicting absolute durations.</td>
+<tr><td align="center"><b>constraints</b></td><td>Only effective when [dur_prediction_args.arch](#dur_prediction_argsarch) is `'attn'`. The default is on, so naming the attention architecture is enough; set it to `false` to get the absolute-duration variant of the same stack. Requires a consumer that can supply `word_div` and `word_dur`; without them the exported model raises an error instead of silently predicting absolute durations.</td>
 </tbody></table>
 
 ### enc_ffn_kernel_size

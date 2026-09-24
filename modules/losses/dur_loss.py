@@ -19,9 +19,8 @@ class DurationLoss(nn.Module):
     budget of every word instead (``use_allocation`` in the duration predictor),
     its output already carries the right word and sentence sums, so those two
     terms are identically zero and only the phone and allocation terms carry
-    gradient. The trainer forces their coefficients to zero in that case rather
-    than leaving weights that cannot matter; see
-    :meth:`~training.variance_task.VarianceTask.build_losses_and_metrics`.
+    gradient. :func:`build_duration_loss` switches their coefficients off in that
+    case rather than leaving weights that cannot matter.
     """
 
     def __init__(self, offset, loss_type,
@@ -111,3 +110,37 @@ class DurationLoss(nn.Module):
         dur_loss = alloc_loss + pdur_loss + wdur_loss + sdur_loss
 
         return dur_loss
+
+
+def build_duration_loss(dur_hparams: dict, word_budget_given: bool) -> DurationLoss:
+    """Build the duration loss of a flat ``dur_prediction_args`` block.
+
+    Kept in one place so that the two rules below cannot drift apart from the
+    trainer that applies them:
+
+    * The word and sentence terms are switched off when the predictor is handed
+      the frame budget of every word, because it reproduces both sums by
+      construction and the coefficients could not matter. The configured values
+      keep applying to a predictor that predicts the absolute frame scale itself.
+    * The allocation term defaults to on exactly when the predictor allocates,
+      which is the shipped recipe, and to off otherwise, which leaves a
+      configuration written before the term existed with the loss it had.
+
+    Args:
+        dur_hparams (dict): The ``dur_prediction_args`` block of the configuration.
+        word_budget_given (bool): Whether the duration predictor consumes the
+            frame budget of every word. Read it from the model
+            (``dur_needs_word_dur``) rather than from the configuration, because
+            ``use_allocation`` is ignored by the convolutional architectures.
+
+    Returns:
+        DurationLoss: The loss module to train with.
+    """
+    return DurationLoss(
+        offset=dur_hparams['log_offset'],
+        loss_type=dur_hparams['loss_type'],
+        lambda_pdur=dur_hparams['lambda_pdur_loss'],
+        lambda_wdur=0. if word_budget_given else dur_hparams['lambda_wdur_loss'],
+        lambda_sdur=0. if word_budget_given else dur_hparams['lambda_sdur_loss'],
+        lambda_alloc=dur_hparams.get('lambda_alloc_loss', 1.0 if word_budget_given else 0.0),
+    )
