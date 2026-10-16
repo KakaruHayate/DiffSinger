@@ -1,4 +1,4 @@
-from typing import Dict
+﻿from typing import Dict
 
 import torch
 import torch.nn as nn
@@ -213,7 +213,7 @@ class DiffSingerVariance(CategorizedModule, ParameterAdaptorModule):
             'breathiness': 1. / 96,
             'voicing': 1. / 96,
             'tension': 0.1,
-            'falsetto': 0.1,
+            'falsetto': 1.,
             'key_shift': 1. / 12,
             'speed': 1.
         }

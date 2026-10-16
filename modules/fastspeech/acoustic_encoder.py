@@ -1,4 +1,4 @@
-import torch
+﻿import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
@@ -94,7 +94,7 @@ class FastSpeech2Acoustic(nn.Module):
                 'breathiness': 1. / 96,
                 'voicing': 1. / 96,
                 'tension': 0.1,  # 1 / 10; tension logits are roughly [-10, 10]
-                'falsetto': 0.1,  # 1 / 10; falsetto logits are roughly [-10, 10]
+                'falsetto': 1.,  # falsetto is a ratio in [0, 1]
                 'key_shift': 1. / 12,  # one octave — max key shift in most editors
                 'speed': 1.
             }

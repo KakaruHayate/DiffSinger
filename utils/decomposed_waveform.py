@@ -52,22 +52,16 @@ class DecomposedWaveform:
 
     def spectral_envelope(self) -> np.ndarray:
         """
-        Estimate the spectral envelope from the harmonic part of the waveform using
-        a moving-average filter on the STFT magnitude. This works with both the WORLD
-        and the vocal-remover harmonic separators.
+        Spectral envelope of the harmonic part, estimated by smoothing the STFT
+        magnitude with a moving-average filter along the frequency axis.
         :return: envelope magnitude float32[T_frames, B]
         """
         if self._envelope is not None:
             return self._envelope
 
         magnitude = self.harmonic_spectrum()  # [T, bins]
-        # Smooth the magnitude with a prefix-sum moving average along the frequency
-        # axis to approximate the formant envelope. Done in numpy to avoid GPU
-        # round-trips. Windows are truncated at both edges, and the output keeps the
-        # exact same number of bins as the magnitude.
-        # 25 bins at 44.1 kHz / 2048 FFT is about 538 Hz. Narrow enough to keep the
-        # relative height of a formant peak, wide enough to smooth out the harmonic
-        # ripples; validated against an independent mouth-opening model.
+        # 25 bins at 44.1 kHz / 2048 FFT is about 538 Hz, which keeps the relative
+        # height of a formant peak while smoothing out the harmonic ripples.
         smooth_kernel_size = 25
         n_bins = magnitude.shape[1]
         n_frames = magnitude.shape[0]

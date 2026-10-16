@@ -213,14 +213,14 @@ def get_falsetto_base_harmonic(
         waveform: Union[np.ndarray, DecomposedWaveform],
         samplerate, f0, length,
         *, hop_size=None, fft_size=None, win_size=None,
-        domain='logit',
+        domain='ratio',
         correction_mode='envelope'
 ):
     """
     Definition of falsetto: the formant-corrected ratio between the second and fourth
     harmonics, `H2* / (H2* + H4*)`. The asterisk indicates that the harmonic amplitudes
-    are compensated with the vocal tract response before comparison, following
-    Keating (2014).
+    are compensated with the vocal tract response before comparison.
+    Refer to: Keating, P. A. (2014). Acoustic Measures of Falsetto Voice. (DOI:10.1121/1.4877544)
     :param waveform: All other analysis parameters will not take effect if a
      DeconstructedWaveform is given
     :param samplerate: sampling rate

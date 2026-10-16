@@ -49,7 +49,7 @@ VARIANCE_ITEM_ATTRIBUTES = [
     'breathiness',  # frame-level RMS of aperiodic parts (dB), float32[T_s,]
     'voicing',  # frame-level RMS of harmonic parts (dB), float32[T_s,]
     'tension',  # frame-level tension (logit), float32[T_s,]
-    'falsetto',  # frame-level falsetto (logit), float32[T_s,]
+    'falsetto',  # frame-level falsetto (ratio), float32[T_s,]
 ]
 WAV_CANDIDATE_EXTENSIONS = ['.wav', '.flac']
 DS_INDEX_SEP = '#'
@@ -558,7 +558,7 @@ class VarianceBinarizer(BaseBinarizer):
                     )
             if falsetto is None:
                 falsetto = get_falsetto_base_harmonic(
-                    dec_waveform, None, None, length=length, domain='logit'
+                    dec_waveform, None, None, length=length, domain='ratio'
                 )
                 falsetto_from_wav = True
 

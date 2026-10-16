@@ -100,8 +100,8 @@ tension_logit_min: -10.0
 tension_logit_max: 10.0
 tension_smooth_width: 0.06
 
-falsetto_logit_min: -10.0
-falsetto_logit_max: 10.0
+falsetto_ratio_min: 0.0
+falsetto_ratio_max: 1.0
 falsetto_smooth_width: 0.06
 
 variances_prediction_args:

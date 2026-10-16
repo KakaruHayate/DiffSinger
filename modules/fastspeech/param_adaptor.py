@@ -67,14 +67,8 @@ class ParameterAdaptorModule(torch.nn.Module):
             ))
 
         if self.predict_falsetto:
-            ranges.append((
-                hparams['falsetto_logit_min'],
-                hparams['falsetto_logit_max']
-            ))
-            clamps.append((
-                hparams['falsetto_logit_min'],
-                hparams['falsetto_logit_max']
-            ))
+            ranges.append((0., 1.))
+            clamps.append((0., 1.))
 
         variances_hparams = hparams['variances_prediction_args']
         total_repeat_bins = variances_hparams['total_repeat_bins']
