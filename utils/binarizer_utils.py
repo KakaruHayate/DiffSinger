@@ -209,6 +209,85 @@ def get_tension_base_harmonic(
     return tension
 
 
+def get_falsetto_base_harmonic(
+        waveform: Union[np.ndarray, DecomposedWaveform],
+        samplerate, f0, length,
+        *, hop_size=None, fft_size=None, win_size=None,
+        domain='logit',
+        correction_mode='envelope'
+):
+    """
+    Definition of falsetto: the formant-corrected ratio between the second and fourth
+    harmonics, `H2* / (H2* + H4*)`. The asterisk indicates that the harmonic amplitudes
+    are compensated with the vocal tract response before comparison, following
+    Keating (2014).
+    :param waveform: All other analysis parameters will not take effect if a
+     DeconstructedWaveform is given
+    :param samplerate: sampling rate
+    :param f0: reference f0
+    :param length: Expected number of frames
+    :param hop_size: Frame width, in number of samples
+    :param fft_size: Number of fft bins
+    :param win_size: Window size, in number of samples
+    :param domain: The domain of the final ratio representation.
+     Can be 'ratio' (the raw ratio), 'db' (log decibel) or 'logit' (the reverse function of sigmoid)
+    :param correction_mode: `'envelope'` divides each harmonic energy by the spectral
+     envelope value at its frequency; `'none'` keeps the raw ratio for comparison.
+    :return: falsetto
+    """
+    if not isinstance(waveform, DecomposedWaveform):
+        waveform = DecomposedWaveform(
+            waveform=waveform, samplerate=samplerate, f0=f0,
+            hop_size=hop_size, fft_size=fft_size, win_size=win_size
+        )
+
+    samplerate = waveform.samplerate
+    f0 = waveform.f0
+
+    # Harmonic amplitudes are read directly from the STFT magnitude of the separated
+    # harmonic part, so no waveform reconstruction and no librosa RMS pass is needed.
+    magnitude = waveform.harmonic_spectrum()  # [T_frames, bins]
+    fft_size = waveform.fft_size
+    bins_per_hz = fft_size / samplerate
+    envelope = waveform.spectral_envelope() if correction_mode == 'envelope' else None
+
+    n_frames, n_bins = magnitude.shape
+    frame_indices = np.clip(
+        np.round(np.linspace(0, len(f0) - 1, length)).astype(int),
+        a_min=0, a_max=n_frames - 1
+    )
+    f0_at_frames = f0[np.clip(frame_indices, 0, len(f0) - 1)].astype(np.float64)
+    freq_h2 = 2. * f0_at_frames
+    freq_h4 = 4. * f0_at_frames
+    bin_h2 = np.clip(np.round(freq_h2 * bins_per_hz).astype(int), 0, n_bins - 1)
+    bin_h4 = np.clip(np.round(freq_h4 * bins_per_hz).astype(int), 0, n_bins - 1)
+    energy_h2 = magnitude[frame_indices, bin_h2].astype(np.float64)
+    energy_h4 = magnitude[frame_indices, bin_h4].astype(np.float64)
+
+    if envelope is not None:
+        energy_h2 /= (envelope[frame_indices, bin_h2].astype(np.float64) + 1e-8)
+        energy_h4 /= (envelope[frame_indices, bin_h4].astype(np.float64) + 1e-8)
+    elif correction_mode != 'none':
+        raise ValueError(f'Invalid correction mode: {correction_mode}')
+
+    # Unvoiced frames have no F0, so both harmonic indices collapse onto bin 0 and the
+    # ratio would be a meaningless constant of 0.5. Report them as 0 instead.
+    denominator = energy_h2 + energy_h4
+    voiced = (denominator > 0) & (f0_at_frames > 0)
+    falsetto = np.zeros_like(denominator)
+    falsetto[voiced] = energy_h2[voiced] / denominator[voiced]
+    falsetto = np.clip(falsetto, a_min=0, a_max=1)
+    if domain == 'ratio':
+        return falsetto
+    elif domain == 'db':
+        return librosa.amplitude_to_db(np.clip(falsetto, 1e-5, 1), top_db=None)
+    elif domain == 'logit':
+        falsetto = np.clip(falsetto, a_min=1e-4, a_max=1 - 1e-4)
+        return np.log(falsetto / (1 - falsetto))
+    else:
+        raise ValueError(f'Invalid domain: {domain}')
+
+
 class SinusoidalSmoothingConv1d(torch.nn.Conv1d):
     def __init__(self, kernel_size):
         super().__init__(

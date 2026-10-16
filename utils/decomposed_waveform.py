@@ -47,6 +47,83 @@ class DecomposedWaveform:
         raise NotImplementedError()
 
     @property
+    def f0(self):
+        raise NotImplementedError()
+
+    def spectral_envelope(self) -> np.ndarray:
+        """
+        Estimate the spectral envelope from the harmonic part of the waveform using
+        a moving-average filter on the STFT magnitude. This works with both the WORLD
+        and the vocal-remover harmonic separators.
+        :return: envelope magnitude float32[T_frames, B]
+        """
+        if self._envelope is not None:
+            return self._envelope
+
+        magnitude = self.harmonic_spectrum()  # [T, bins]
+        # Smooth the magnitude with a prefix-sum moving average along the frequency
+        # axis to approximate the formant envelope. Done in numpy to avoid GPU
+        # round-trips. Windows are truncated at both edges, and the output keeps the
+        # exact same number of bins as the magnitude.
+        # 25 bins at 44.1 kHz / 2048 FFT is about 538 Hz. Narrow enough to keep the
+        # relative height of a formant peak, wide enough to smooth out the harmonic
+        # ripples; validated against an independent mouth-opening model.
+        smooth_kernel_size = 25
+        n_bins = magnitude.shape[1]
+        n_frames = magnitude.shape[0]
+        padded = np.concatenate([
+            np.zeros((n_frames, smooth_kernel_size - 1), dtype=np.float64),
+            magnitude.astype(np.float64)
+        ], axis=1)  # [T, n_bins + k - 1]
+        cumulative = np.cumsum(padded, axis=1)
+        right = cumulative[:, smooth_kernel_size - 1:]  # [T, n_bins]
+        left = np.concatenate([
+            np.zeros((n_frames, 1), dtype=np.float64),
+            cumulative[:, : n_bins - 1]
+        ], axis=1)  # [T, n_bins]
+        counts = np.minimum(
+            np.arange(1, n_bins + 1), smooth_kernel_size
+        ).astype(np.float64)
+        envelope = (right - left) / counts[None, :]
+        self._envelope = envelope.astype(np.float32)  # [T, bins]
+        return self._envelope
+
+    def harmonic_spectrum(self) -> np.ndarray:
+        """
+        Magnitude spectrum of the harmonic part of the waveform, shared by the harmonic
+        amplitude extraction and the envelope estimation.
+        :return: magnitude float32[T_frames, B]
+        """
+        if self._magnitude is not None:
+            return self._magnitude
+
+        device = self._device
+        win_size = self.win_size
+        hop_size = self.hop_size
+
+        with torch.no_grad():
+            harmonic = torch.from_numpy(self.harmonic()).unsqueeze(0).to(device)  # [B, T]
+            phase = torch.arange(win_size, dtype=harmonic.dtype, device=device) / win_size * 2 * np.pi
+            nuttall_window = (
+                    0.355768
+                    - 0.487396 * torch.cos(phase)
+                    + 0.144232 * torch.cos(2 * phase)
+                    - 0.012604 * torch.cos(3 * phase)
+            )
+            spec = torch.stft(
+                harmonic,
+                n_fft=win_size,
+                win_length=win_size,
+                hop_length=hop_size,
+                window=nuttall_window,
+                center=True,
+                return_complex=True
+            )  # [B, bins, T_frames]
+            magnitude = spec.abs()  # [B, bins, T_frames]
+        self._magnitude = magnitude[0].transpose(0, 1).cpu().numpy().astype(np.float32)  # [T, bins]
+        return self._magnitude
+
+    @property
     def fft_size(self):
         raise NotImplementedError()
 
@@ -87,6 +164,8 @@ class DecomposedWaveformPyWorld(DecomposedWaveform):
         self._harmonic_part: np.ndarray = None
         self._aperiodic_part: np.ndarray = None
         self._harmonics: Dict[int, np.ndarray] = {}
+        self._envelope: np.ndarray = None
+        self._magnitude: np.ndarray = None
 
     @property
     def samplerate(self):
@@ -103,6 +182,10 @@ class DecomposedWaveformPyWorld(DecomposedWaveform):
     @property
     def win_size(self):
         return self._win_size
+
+    @property
+    def f0(self):
+        return self._f0
 
     def _world_extraction(self):
         # Add a tiny noise to the signal to avoid NaN results of D4C in rare edge cases

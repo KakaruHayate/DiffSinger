@@ -213,6 +213,7 @@ class DiffSingerVariance(CategorizedModule, ParameterAdaptorModule):
             'breathiness': 1. / 96,
             'voicing': 1. / 96,
             'tension': 0.1,
+            'falsetto': 0.1,
             'key_shift': 1. / 12,
             'speed': 1.
         }
@@ -221,6 +222,7 @@ class DiffSingerVariance(CategorizedModule, ParameterAdaptorModule):
             'breathiness': 1.,
             'voicing': 1.,
             'tension': 1.,
+            'falsetto': 1.,
             'key_shift': 1.,
             'speed': 1.
         }
