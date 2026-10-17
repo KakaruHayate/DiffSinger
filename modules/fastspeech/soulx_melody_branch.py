@@ -80,14 +80,18 @@ class ConvNeXtV2Block(nn.Module):
 
 SOULX_NOTE_TYPE_REST = 1
 SOULX_NOTE_TYPE_NORMAL = 2
+# Only standard MIDI 0-127 and note types 0/1/2 are ever queried, so the
+# embeddings are pruned from SoulX's 256 rows to these sizes.
+SOULX_PITCH_BINS = 128
+SOULX_TYPE_BINS = 3
 
 
 class SoulXMelodyBranch(nn.Module):
     def __init__(self, soulx_dim=512, soulx_layers=4):
         super().__init__()
         hidden_size = hparams['hidden_size']
-        self.note_pitch_encoder = nn.Embedding(256, soulx_dim)
-        self.note_type_encoder = nn.Embedding(256, soulx_dim)
+        self.note_pitch_encoder = nn.Embedding(SOULX_PITCH_BINS, soulx_dim)
+        self.note_type_encoder = nn.Embedding(SOULX_TYPE_BINS, soulx_dim)
         self.preflow = nn.Sequential(
             *[ConvNeXtV2Block(soulx_dim, soulx_dim * 2) for _ in range(soulx_layers)]
         )
@@ -156,7 +160,7 @@ class SoulXMelodyBranch(nn.Module):
         # MIDI numbers match SoulX's note_pitch domain. DiffSinger's binarizer
         # interpolates note_midi over rests, while SoulX uses pitch=0 for
         # SP/rest notes; round (note_midi may be fractional) and zero rests.
-        note_pitch = note_midi.round().long().clamp(min=0, max=255)
+        note_pitch = note_midi.round().long().clamp(min=0, max=127)
         note_pitch = note_pitch * (~note_rest).long()
         # note_type: 1 = SP/rest, 2 = normal lyric note
         note_type = 2 - note_rest.long()
@@ -196,6 +200,14 @@ class SoulXMelodyBranch(nn.Module):
         for k in list(state.keys()):
             if k.endswith(('.grn.gamma', '.grn.beta')) and state[k].dim() == 3:
                 state[k] = state[k].reshape(-1)
+
+        # Accept unpruned 256-row embeddings from older extractions.
+        for k, module in (
+            ('note_pitch_encoder.weight', self.note_pitch_encoder),
+            ('note_type_encoder.weight', self.note_type_encoder),
+        ):
+            if k in state and state[k].shape[0] > module.num_embeddings:
+                state[k] = state[k][:module.num_embeddings]
 
         if text_bias_init is not None and getattr(self, 'text_bias', None) is not None:
             state['text_bias'] = text_bias_init

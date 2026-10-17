@@ -21,6 +21,9 @@ KEY_MAP_PREFIXES = {
 }
 
 DEFAULT_PHONE_SET = 'J:/SoulX-Singer-main/soulxsinger/utils/phoneme/phone_set.json'
+# SoulXMelodyBranch only queries MIDI 0-127 and note types 0/1/2.
+PITCH_BINS = 128
+TYPE_BINS = 3
 
 
 def compute_text_bias(ckpt, phone_set_path):
@@ -77,6 +80,10 @@ def main():
 
     if 'note_text_encoder.weight' in ckpt:
         out['text_bias_init'] = compute_text_bias(ckpt, args.phone_set).float()
+
+    # Prune unused embedding rows (256 -> 128 pitch bins, 256 -> 3 note types).
+    out['note_pitch_encoder.weight'] = out['note_pitch_encoder.weight'][:PITCH_BINS]
+    out['note_type_encoder.weight'] = out['note_type_encoder.weight'][:TYPE_BINS]
 
     torch.save(out, args.dst)
     n_params = sum(v.numel() for v in out.values() if torch.is_tensor(v))
