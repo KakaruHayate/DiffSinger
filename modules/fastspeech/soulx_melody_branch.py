@@ -88,11 +88,8 @@ class SoulXMelodyBranch(nn.Module):
         """
         # MIDI numbers match SoulX's note_pitch domain directly; pad/rest -> 0.
         note_pitch = note_midi.long().clamp(min=0, max=255)
-        note_type = torch.where(
-            note_rest,
-            torch.full_like(note_pitch, SOULX_NOTE_TYPE_REST),
-            torch.full_like(note_pitch, SOULX_NOTE_TYPE_NORMAL),
-        )
+        # note_type: 1 = SP/rest, 2 = normal lyric note
+        note_type = 2 - note_rest.long()
         x = self.note_pitch_encoder(note_pitch) + self.note_type_encoder(note_type)
         x = self.preflow(x)
         return self.out_proj(x)
