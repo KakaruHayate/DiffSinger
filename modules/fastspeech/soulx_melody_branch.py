@@ -153,8 +153,11 @@ class SoulXMelodyBranch(nn.Module):
         :param mel2note: optional [B, T_frames], 1-based
         :return: [B, T_n, H]
         """
-        # MIDI numbers match SoulX's note_pitch domain directly; pad/rest -> 0.
-        note_pitch = note_midi.long().clamp(min=0, max=255)
+        # MIDI numbers match SoulX's note_pitch domain. DiffSinger's binarizer
+        # interpolates note_midi over rests, while SoulX uses pitch=0 for
+        # SP/rest notes; round (note_midi may be fractional) and zero rests.
+        note_pitch = note_midi.round().long().clamp(min=0, max=255)
+        note_pitch = note_pitch * (~note_rest).long()
         # note_type: 1 = SP/rest, 2 = normal lyric note
         note_type = 2 - note_rest.long()
         x = self.note_pitch_encoder(note_pitch) + self.note_type_encoder(note_type)
