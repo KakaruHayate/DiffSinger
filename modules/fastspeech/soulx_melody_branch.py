@@ -20,11 +20,10 @@ SoulX note_type convention (from preprocess/tools/midi_parser.py):
 DiffSinger mapping: note_rest=True -> 1, otherwise -> 2 (glide/slur info is
 not available at this level and is left to the original MelodyEncoder).
 
-Optimizer routing: every parameter here is an Embedding, a 1-D vector, or an
-AdamWLinear/AdamWConv1d, so none of them are sent to Muon (which must only
-see dense 2-D update matrices). The whole branch is fine-tuned with AdamW to
-preserve the pretrained SoulX weights (Muon applies 0.1 weight decay and
-orthogonalises updates).
+Optimizer routing: only the ConvNeXt pointwise convs (pwconv1/pwconv2) are
+dense 2-D block MLPs and go to Muon. Everything else stays on AdamW — the
+embeddings, the depthwise conv (AdamWConv1d), the 1-D GRN/text_bias vectors,
+and the final projections (AdamWLinear).
 """
 
 from typing import Optional
@@ -59,10 +58,12 @@ class ConvNeXtV2Block(nn.Module):
             dim, dim, kernel_size=7, padding=padding, groups=dim, dilation=dilation
         )
         self.norm = nn.LayerNorm(dim, eps=1e-6)
-        self.pwconv1 = AdamWLinear(dim, intermediate_dim)
+        # ConvNeXt's pointwise convs act as the block MLP: dense 2-D matrices,
+        # deliberately left as plain nn.Linear so Muon optimises them.
+        self.pwconv1 = nn.Linear(dim, intermediate_dim)
         self.act = nn.GELU()
         self.grn = GRN(intermediate_dim)
-        self.pwconv2 = AdamWLinear(intermediate_dim, dim)
+        self.pwconv2 = nn.Linear(intermediate_dim, dim)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         residual = x
