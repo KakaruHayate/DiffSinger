@@ -281,10 +281,10 @@ class DiffSingerVariance(CategorizedModule, ParameterAdaptorModule):
             mel2ph = self.lr(dur_pred_align)
             mel2ph = F.pad(mel2ph, [0, base_pitch.shape[1] - mel2ph.shape[1]])
 
+        ph_encoder_out = encoder_out  # phoneme-level, unpadded (for the SoulX text side)
         encoder_out = F.pad(encoder_out, [0, 0, 1, 0])
         mel2ph_ = mel2ph[..., None].repeat([1, 1, hparams['hidden_size']])
         condition = torch.gather(encoder_out, 1, mel2ph_)
-
         if self.use_stretch_embed:
             stretch = torch.round(1000 * self.sr(mel2ph, ph_dur))
             if self.training and stretch.numel() > 1000:
@@ -308,7 +308,10 @@ class DiffSingerVariance(CategorizedModule, ParameterAdaptorModule):
                     glide=note_glide
                 )
                 if self.use_soulx_melody_branch:
-                    soulx_out = self.soulx_melody_branch(note_midi, note_rest)
+                    soulx_out = self.soulx_melody_branch(
+                        note_midi, note_rest,
+                        encoder_out=ph_encoder_out, mel2ph=mel2ph, mel2note=mel2note
+                    )
                     if self.training and self.soulx_melody_branch.branch_dropout > 0:
                         if torch.rand(()) < self.soulx_melody_branch.branch_dropout:
                             soulx_out = torch.zeros_like(soulx_out)

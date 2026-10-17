@@ -248,7 +248,12 @@ class DiffSingerVarianceONNX(DiffSingerVariance):
                 glide=note_glide
             )
             if getattr(self, 'use_soulx_melody_branch', False):
-                melody_encoder_out = melody_encoder_out + self.soulx_melody_branch(note_midi, note_rest)
+                mel2ph = self.lr(ph_dur)
+                mel2note = self.lr(note_dur)
+                melody_encoder_out = melody_encoder_out + self.soulx_melody_branch(
+                    note_midi, note_rest,
+                    encoder_out=encoder_out, mel2ph=mel2ph, mel2note=mel2note
+                )
             melody_encoder_out = self.forward_mel2x_gather(melody_encoder_out, note_dur, x_dim=self.hidden_size)
             condition += melody_encoder_out
         if expr is None:

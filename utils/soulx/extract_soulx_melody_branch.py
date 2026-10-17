@@ -9,6 +9,8 @@ Usage (diffsinger conda env):
 """
 
 import argparse
+import json
+
 import torch
 
 # SoulXSinger checkpoint key -> SoulXMelodyBranch key
@@ -18,11 +20,40 @@ KEY_MAP_PREFIXES = {
     'preflow.': 'preflow.',
 }
 
+DEFAULT_PHONE_SET = 'J:/SoulX-Singer-main/soulxsinger/utils/phoneme/phone_set.json'
+
+
+def compute_text_bias(ckpt, phone_set_path):
+    """Mean text embedding over real (non-special-token) phoneme rows.
+
+    SoulX's preflow expects text_emb + pitch_emb + type_emb; DiffSinger has no
+    compatible text vocabulary, so this mean vector initialises the learnable
+    ``text_bias`` stand-in of SoulXMelodyBranch.
+    """
+    text_weight = ckpt['note_text_encoder.weight']
+    num_special = 10  # <PAD>, <SP>, <AP>, <UNK>, <BOW>, <EOW>, <BOS>, <EOS>, <MASK>, <SEP>
+    try:
+        with open(phone_set_path, encoding='utf8') as f:
+            phone_set = json.load(f)
+        valid_rows = [
+            i for i, p in enumerate(phone_set)
+            if i < text_weight.shape[0] and not p.startswith('<')
+        ]
+        print(f'| text bias: averaging {len(valid_rows)} phoneme rows '
+              f'(of {text_weight.shape[0]})')
+        return text_weight[valid_rows].mean(dim=0)
+    except FileNotFoundError:
+        print(f'| phone set not found at {phone_set_path}, '
+              f'average rows [{num_special}:] instead')
+        return text_weight[num_special:].mean(dim=0)
+
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--src', required=True, help='Path to SoulX-Singer model.pt')
     ap.add_argument('--dst', required=True, help='Output checkpoint path')
+    ap.add_argument('--phone-set', default=DEFAULT_PHONE_SET,
+                    help='SoulX phone_set.json, used for text_bias initialisation')
     args = ap.parse_args()
 
     ckpt = torch.load(args.src, map_location='cpu')
@@ -43,6 +74,9 @@ def main():
             'No melody-branch keys found. Top-level keys sample: '
             + ', '.join(list(ckpt.keys())[:20])
         )
+
+    if 'note_text_encoder.weight' in ckpt:
+        out['text_bias_init'] = compute_text_bias(ckpt, args.phone_set).float()
 
     torch.save(out, args.dst)
     n_params = sum(v.numel() for v in out.values() if torch.is_tensor(v))
