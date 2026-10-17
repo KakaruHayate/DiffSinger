@@ -19,6 +19,7 @@ from modules.core import (
 from modules.fastspeech.acoustic_encoder import FastSpeech2Acoustic
 from modules.fastspeech.param_adaptor import ParameterAdaptorModule
 from modules.fastspeech.tts_modules import RhythmRegulator, LengthRegulator, StretchRegulator
+from modules.fastspeech.soulx_melody_branch import SoulXMelodyBranch
 from modules.fastspeech.variance_encoder import FastSpeech2Variance, MelodyEncoder
 from utils.hparams import hparams
 
@@ -163,6 +164,23 @@ class DiffSingerVariance(CategorizedModule, ParameterAdaptorModule):
             else:
                 self.base_pitch_embed = AdamWLinear(1, hparams['hidden_size'])
 
+            # SoulX-Singer pretrained melody branch (parallel to MelodyEncoder).
+            self.use_soulx_melody_branch = hparams.get('use_soulx_melody_branch', False)
+            if self.use_soulx_melody_branch:
+                self.soulx_melody_branch = SoulXMelodyBranch()
+                soulx_ckpt = hparams.get('soulx_melody_branch_ckpt', None)
+                if soulx_ckpt:
+                    missing, unexpected = self.soulx_melody_branch.load_soulx_checkpoint(
+                        soulx_ckpt, strict=False
+                    )
+                    print(f'| SoulX melody branch loaded from {soulx_ckpt} '
+                          f'(missing={missing}, unexpected={unexpected})')
+                if hparams.get('soulx_melody_branch_freeze', False):
+                    for p in self.soulx_melody_branch.preflow.parameters():
+                        p.requires_grad = False
+                    self.soulx_melody_branch.note_pitch_encoder.weight.requires_grad = False
+                    self.soulx_melody_branch.note_type_encoder.weight.requires_grad = False
+
             self.pitch_retake_embed = Embedding(2, hparams['hidden_size'])
             pitch_hparams = hparams['pitch_prediction_args']
             self.pitch_backbone_type = compat.get_backbone_type(hparams, nested_config=pitch_hparams)
@@ -289,6 +307,12 @@ class DiffSingerVariance(CategorizedModule, ParameterAdaptorModule):
                     note_midi, note_rest, note_dur,
                     glide=note_glide
                 )
+                if self.use_soulx_melody_branch:
+                    soulx_out = self.soulx_melody_branch(note_midi, note_rest)
+                    if self.training and self.soulx_melody_branch.branch_dropout > 0:
+                        if torch.rand(()) < self.soulx_melody_branch.branch_dropout:
+                            soulx_out = torch.zeros_like(soulx_out)
+                    melody_encoder_out = melody_encoder_out + soulx_out
                 melody_encoder_out = F.pad(melody_encoder_out, [0, 0, 1, 0])
                 mel2note_ = mel2note[..., None].repeat([1, 1, hparams['hidden_size']])
                 melody_condition = torch.gather(melody_encoder_out, 1, mel2note_)
